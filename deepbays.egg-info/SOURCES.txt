@@ -1,0 +1,16 @@
+setup.py
+deepbays/__init__.py
+deepbays/kernels.py
+deepbays/theory_1HL_FC.py
+deepbays/theory_deep_FC.py
+deepbays/theory_multitask.py
+deepbays.egg-info/PKG-INFO
+deepbays.egg-info/SOURCES.txt
+deepbays.egg-info/dependency_links.txt
+deepbays.egg-info/requires.txt
+deepbays.egg-info/top_level.txt
+deepbays/NN/__init__.py
+deepbays/NN/networks.py
+deepbays/NN/training.py
+deepbays/tasks/__init__.py
+deepbays/tasks/tasks.py
