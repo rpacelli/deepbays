@@ -7,7 +7,6 @@ import torch.optim as optim
 from torch import nn
 from torch.optim import Optimizer
 
-
 class Erf(torch.nn.Module):
     def __init__(self):
         super().__init__()

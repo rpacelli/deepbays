@@ -1,9 +1,7 @@
 import numpy as np
 from scipy.optimize import fsolve
-from kernels import kernel_erf, kernel_relu, kernel_id, computeKmatrix, computeKmatrixTorch, kernel_erf_torch
-import time, torch
-from functools import reduce
-from copy import deepcopy
+from .kernels import kernel_erf, kernel_relu, kernel_id, computeKmatrix, computeKmatrixTorch, kernel_erf_torch
+import torch
 
 class prop_width_GP_deep_FC():
     def __init__(self, N1, l0, l1, act, T, L):
@@ -19,7 +17,8 @@ class prop_width_GP_deep_FC():
         rKL = torch.tensor(self.C, dtype = torch.float64, requires_grad = False)
         for l in range(self.L):
             orderParam = Q[l] / self.l1
-            rKL = orderParam * computeKmatrixTorch(rKL, self.kernelTorch)
+            #rKL = orderParam * computeKmatrixTorch(rKL, self.kernelTorch)
+            rKL = orderParam * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
         A = rKL +  self.T * torch.eye(self.P) 
         invA = torch.inverse(A)
         return ( torch.sum(Q - torch.log(Q))
@@ -64,7 +63,7 @@ class prop_width_GP_deep_FC():
             rKXL = rKL.diagonal() 
             rK0XL = orderParam * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
             rK0L = orderParam * self.kernel(rK0L, rK0L, rK0L)
-            rKL = orderParam * computeKmatrix(rKL, self.kernel)
+            rKL = orderParam * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
         A = rKL + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
         K0_invK = np.matmul(rK0XL, invK)
