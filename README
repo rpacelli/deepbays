@@ -1,0 +1,25 @@
+CODICE DI BUONA CONDOTTA 
+
+1) Scegliete un colore. Io ho messo questi con le iniziali di ciascuno. Se non vi piace cambiatelo. Quando cambiate qualcosa fatelo sempre scrivendo \RP{così}. 
+\newcommand{\RA}[1]{{\color{violet}#1}}
+\newcommand{\PB}[1]{{\color{blue}#1}}
+\newcommand{\PR}[1]{{\color{red}#1}}
+\newcommand{\RP}[1]{{\color{purple}#1}}
+
+2) In questo documento si possono creare referenze tra appendix e main, ovvero possiamo citare nel main le equazioni del supplemental e viceversa. Le equazioni vanno sempre citate con \eqref{}. 
+
+Per tenere questa cosa ordinata le equazioni nelle appendici devono essere labellate così: 
+
+\label{your_label} PER IL MAIN TEXT
+
+\label{supp:your_label} PER IL SUPPLEMENTAL
+
+In questo modo evitiamo i doppioni e di uscire pazzi. Ripeto: 
+
+
+
+1) Ho dichiarato degli operatori. Si può scrivere 
+  \dnn
+  \cnn 
+in math mode per ottenere \mathrm{DNN}. 
+Dichiaratene altri anche voi.
