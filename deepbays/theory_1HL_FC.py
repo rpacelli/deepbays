@@ -43,7 +43,6 @@ class prop_width_GP_1HL_FC():
         self.K0X = self.kernel(self.C0[:,None], self.C0X, self.CX[None, :])
     
     def computeAveragePrediction(self, data, labels, testData, testLabels):
-        
         self.computeTestsetKernels(data, testData)
         self.orderParam = self.optQ / self.l1
         A = self.orderParam * self.K + (self.T) * np.eye(self.P)
