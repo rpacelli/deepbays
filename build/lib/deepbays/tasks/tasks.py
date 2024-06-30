@@ -1,17 +1,33 @@
 
 import torch, torchvision, torchvision.transforms as t 
 import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
 
 def relu(x):
     return x if x > 0 else 0
 
-def filter_by_label(data_loader, labels, P, whichTask):
+def filter_by_label_old(data_loader, labels, P, whichTask):
     data, target = next(iter(data_loader))
     mask = torch.zeros_like(target, dtype = torch.bool)
     for label in labels:
         mask |=  target  ==  label
     filtered_data = data[mask][P*whichTask:P*whichTask+P]
     filtered_labels = target[mask][P*whichTask:P*whichTask+P]
+    zero_one_labels = [0 if x  ==  labels[0] else 1 for x in filtered_labels]
+    return filtered_data, torch.tensor(zero_one_labels)
+
+def filter_by_label(data_loader, labels, P, dataSeed):
+    data, target = next(iter(data_loader))
+    mask = torch.zeros_like(target, dtype = torch.bool)
+    for label in labels:
+        mask |=  target  ==  label
+    filtered_data = data[mask]
+    filtered_labels = target[mask]
+    rng = np.random.RandomState(dataSeed)  
+    rp = rng.permutation(len(filtered_labels))
+    filtered_data = filtered_data[rp[:P]]
+    filtered_labels = filtered_labels[rp[:P]]
     zero_one_labels = [0 if x  ==  labels[0] else 1 for x in filtered_labels]
     return filtered_data, torch.tensor(zero_one_labels)
 
@@ -36,31 +52,33 @@ def normalizeDataset(data, testData):
 
 
 class mnist_dataset: 
-    def __init__(self, N, selectedLabels, whichTask=0): #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
+    def __init__(self, N, selectedLabels, dataSeed = 123, whichTask=0): #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
         self.N = N
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels
         self.whichTask = whichTask
+        self.dataSeed = dataSeed
     def make_data(self, P, Ptest, batchSize = 60000):
         transformDataset = getTransforms(self)
         trainset = torchvision.datasets.MNIST(root = './data', train = True, download = True, transform = transformDataset)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size = batchSize)
         testset = torchvision.datasets.MNIST(root = './data', train = False, download = True, transform = transformDataset)
         testloader = torch.utils.data.DataLoader(testset, batch_size = 10000, num_workers = 0)
-        #all_data, targets = next(iter(trainloader))
         # Filter train and test datasets
-        data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.whichTask)
-        testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, self.whichTask)
+        #data, labels = filter_by_label_old(trainloader, self.selectedLabels, P, self.whichTask)
+        #testData, testLabels = filter_by_label_old(testloader, self.selectedLabels, Ptest, self.whichTask)
+        data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.dataSeed)
+        testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, self.dataSeed)
         data, testData  = normalizeDataset(data, testData)
         return data, labels.unsqueeze(1), testData, testLabels.unsqueeze(1)
  
 
 class cifar_dataset: 
-    def __init__(self, N, selectedLabels, whichTask=0):
+    def __init__(self, N, selectedLabels, dataSeed=123):
         self.N = N
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels
-        self.whichTask = whichTask
+        self.dataSeed = dataSeed
     def make_data(self, P, Ptest, batchSize = 60000):
         transformDataset = getTransforms(self)
         trainset = torchvision.datasets.CIFAR10(root = './data', train = True, download = True, transform = transformDataset)
@@ -69,8 +87,8 @@ class cifar_dataset:
         testloader = torch.utils.data.DataLoader(testset, batch_size = 10000, num_workers = 0)
         #all_data, targets = next(iter(trainloader))
         # Filter train and test datasets
-        data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.whichTask)
-        testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, self.whichTask)
+        data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.dataSeed)
+        testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, self.dataSeed)
         data, testData  = normalizeDataset(data, testData)
         return data, labels.unsqueeze(1), testData, testLabels.unsqueeze(1)
 
@@ -215,3 +233,71 @@ class hmm_dataset:
             data, labels, test_data, test_labels = self.get_hmm(P, P_test)
         #print("the dimension of data is ", len(data[0]))
         return data, labels, test_data, test_labels
+    
+# Define a simple 1-hidden-layer neural network
+class Simple1HLNet(nn.Module):
+    def __init__(self, input_dim, hidden_dim):
+        super(Simple1HLNet, self).__init__()
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, 1)
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.tanh(self.fc2(x))
+        return x
+
+class perceptron(nn.Module):
+    def __init__(self, input_dim):
+        super(perceptron, self).__init__()
+        self.fc1 = nn.Linear(input_dim, 1)
+    def forward(self, x):
+        x = F.tanh(self.fc1(x))
+        return x
+
+class synthetic_1hl_dataset: 
+    def __init__(self, N, hidden_dim):
+        self.N = N
+        self.hidden_dim = hidden_dim
+        self.model = Simple1HLNet(N, hidden_dim)
+        # Initialize the model parameters
+        self.initialize_model()
+
+    def initialize_model(self):
+        # Set the model to evaluation mode and initialize with random weights
+        self.model.eval()
+        with torch.no_grad():
+            for param in self.model.parameters():
+                nn.init.normal_(param, mean=0, std=1)
+    
+    def make_data(self, P, Ptest):
+        inputs = torch.randn((P, self.N))
+        test_inputs = torch.randn((Ptest, self.N))
+        
+        with torch.no_grad():
+            targets = self.model(inputs).squeeze()
+            test_targets = self.model(test_inputs).squeeze()
+        
+        return inputs, targets.unsqueeze(1), test_inputs, test_targets.unsqueeze(1)
+    
+class perceptron_dataset: 
+    def __init__(self, N):
+        self.N = N
+        self.model = perceptron(N)
+        # Initialize the model parameters
+        self.initialize_model()
+
+    def initialize_model(self):
+        # Set the model to evaluation mode and initialize with random weights
+        self.model.eval()
+        with torch.no_grad():
+            for param in self.model.parameters():
+                nn.init.normal_(param, mean=0, std=1)
+    
+    def make_data(self, P, Ptest):
+        inputs = torch.randn((P, self.N))
+        test_inputs = torch.randn((Ptest, self.N))
+        
+        with torch.no_grad():
+            targets = self.model(inputs).squeeze()
+            test_targets = self.model(test_inputs).squeeze()
+        
+        return inputs, targets.unsqueeze(1), test_inputs, test_targets.unsqueeze(1)

@@ -3,7 +3,7 @@ from scipy.optimize import fsolve
 from .kernels import kernel_erf, kernel_relu, kernel_id, computeKmatrix, computeKmatrixTorch, kernel_erf_torch
 import torch
 
-class prop_width_GP_deep_FC():
+class RKGP_deep_FC():
     def __init__(self, N1, l0, l1, act, T, L):
         self.N1 = N1
         self.l0 = l0

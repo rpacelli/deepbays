@@ -13,7 +13,7 @@ def kmatrix(Cmm,Cmn,Cnn,kernel):
     return K
 
 
-class prop_width_GP_1HL_multitask():
+class FC_1HL_multitask():
     def __init__(self, N1, lambda0, lambda1, act, T):
         self.N1 = N1
         self.l0 = lambda0
@@ -44,28 +44,6 @@ class prop_width_GP_1HL_multitask():
         f.backward(retain_graph=True)
         return barQ.grad.data.detach().numpy()   
 
-    def Qperturb(self, K1, K2, Kmix,labels):
-        Ptot = self.Ps + self.Pt
-        alpha = Ptot / self.N1
-        print(alpha)
-        Sigma1 = torch.zeros((Ptot, Ptot), dtype=torch.float64)
-        Sigma1[:self.Ps, :self.Pt] = K1 
-        Sigma12 = torch.zeros((Ptot, Ptot), dtype=torch.float64)
-        Sigma12[self.Ps:Ptot, :self.Pt] = Kmix
-        #Sigma12[:self.Ps, self.Pt:Ptot] = Kmix 
-        Sigma2 = torch.zeros((Ptot, Ptot), dtype=torch.float64)     
-        Sigma2[self.Ps:Ptot, self.Pt:Ptot] = K2 
-        #print(Sigma1, Sigma12, Sigma2)
-        A =  self.T * torch.eye(Ptot) + Sigma1 + Sigma2
-        invA = torch.inverse(A)
-        invASigma12 = torch.matmul(invA, Sigma12)
-        invASigma1 = torch.matmul(invA, Sigma1)
-        invASigma2 = torch.matmul(invA, Sigma2)
-        Q1pert = 1 - (1/self.N1)*( torch.trace(torch.matmul( invA, Sigma1 )) - torch.matmul(torch.matmul(labels, torch.matmul(invASigma1, invA)),labels) )
-        Q12pert =  -(1/self.N1)*( torch.trace(torch.matmul( invA, Sigma12 )) - torch.matmul(torch.matmul(labels, torch.matmul(invASigma12, invA)),labels) )
-        Q2pert = 1 -  (1/self.N1)*(torch.trace(torch.matmul( invA, Sigma2 )) - torch.matmul(torch.matmul(labels, torch.matmul(invASigma2, invA)),labels) )
-        return Q1pert.item(), Q12pert.item(),Q12pert.item(), Q2pert.item()
-
     def computeAveragePrediction(self, inputs1, inputs2, labels1, labels2, testInputs1, testInputs2, testLabels1, testLabels2,kernel, args,theoryFile, barQ):    
         self.Ps = len(inputs1)
         self.Pt = len(inputs2)
@@ -91,35 +69,26 @@ class prop_width_GP_1HL_multitask():
         Kmix = torch.tensor(kmatrix(C1,Cmix,C2,kernel), dtype = torch.float64, requires_grad = False)
 
         additionalArgs = (K1, K2, Kmix, args, labels)
-        #pertQ = Qperturb(*additionalArgs)
         optQ = fsolve(self.computeGrad, barQ, args=additionalArgs, xtol = 1e-8)
         print(f"\nPoint where the gradient is approximately zero: {optQ}")
-        #print(f"\nPerturbation result {pertQ}")
         isClose = np.isclose(self.scomputeGrad(optQ, *additionalArgs), [0.0, 0.0, 0.0, 0.0]) 
         print("\nis exact solution close to zero?", isClose)   
-        #print("\nis perturbative solution close to zero?", np.isclose(computeGrad(pertQ, *additionalArgs), [0.0, 0.0, 0.0, 0.0]), "\n")   
-        print(f"\nInteraction strength gamma: {self.gamma}")
+        #print(f"\nInteraction strength gamma: {self.gamma}")
         optQ = optQ.reshape(2,2)
-        #pertQ = np.array([pertQ]).reshape(2,2)
+
         predLoss1,predLoss2 = 0,0
-        predLoss11,predLoss22 =0
         for p in range(self.Ptest):
             x,y = np.array(testInputs1[p]), np.array(testLabels1[p])
             predLoss1 += self.computeSinglePrediction(data,labels,x,y,optQ, 1, kernel, K1, K2, Kmix, self.corrNorm, invReg)
-            #predLoss11 += computeSinglePrediction(data,labels,x,y,pertQ, 1, kernel, K1, K2, Kmix, self.corrNorm, invReg)
             x,y = np.array(testInputs2[p]), np.array(testLabels2[p])
             predLoss2 += self.computeSinglePrediction(data,labels,x,y,optQ, 2, kernel, K1, K2, Kmix, self.corrNorm, invReg)
-            #predLoss22 += computeSinglePrediction(data,labels,x,y,pertQ, 2, kernel, K1, K2, Kmix, corrNorm, invReg)
 
         with open(theoryFile, "a+") as f: 
             print(self.N1, self.Ps, self.Pt, self.T, self.gamma, self.lambda0, self.lambda1, optQ[0][0], optQ[0][1], optQ[1][1], predLoss1/self.Ptest, predLoss2/self.Ptest, self.Ptest, self.q, self.eta, self.rho, isClose.all(), file = f)
 
-        print("test loss first task ", predLoss1 / self.Ptest )
-        print("test loss second task ", predLoss2 / self.Ptest )
+        print("test loss first task ", predLoss1 / self.Ptest , "\ntest loss second task ", predLoss2 / self.Ptest )
 
         return optQ
-        #print("perturbation test loss first task ", predLoss11 / self.Ptest )
-        #print("perturbation test loss second task ", predLoss22 / self.Ptest )
     
     def computeSinglePrediction(self, data, labels, x, y, optQ, task, kernel, K1, K2, Kmix, corrNorm, invReg):
         Ptot = self.Ps + self.Pt
