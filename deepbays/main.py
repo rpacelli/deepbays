@@ -32,5 +32,4 @@ def RKGP(L, widths, D, priors, T, act = "erf", model_type = "FC"):
             raise ValueError("Cannot build a network with 0 hidden layers.")
 
     model = eval(f"rkgp.{model_type}_{netName}{morespecs}")
-    print(model)
     return model(*args)
