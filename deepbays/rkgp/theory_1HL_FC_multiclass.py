@@ -3,6 +3,7 @@ from scipy.optimize import fsolve
 from kernels import *
 import torch
 from torch.autograd import Variable 
+## DEBUGGED VERSION. PASSED ALL TESTS ON 01/07/2024
 
 class FC_1HL_multiclass():
     def __init__(self, N1, l0, l1, act, T, k):
