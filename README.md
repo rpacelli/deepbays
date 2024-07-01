@@ -125,7 +125,7 @@ gp.minimizeAction(x0=1.0)
 print(f"optQ is {gp.optQ}")
 
 yPred = gp.computePrediction(test_data)
-test_err, bias, var = gp.computeAverageLoss(test_data, test_labels)
-print(f"{1} hidden layer test_err:", test_err, f"{1} hidden layer bias:", bias)
+testLoss, bias, var = gp.computeAverageLoss(test_data, test_labels)
+print("average test loss on testset:", testLrr, "average bias on testset:", bias, "average variance on testset:", var)
 
 ```
