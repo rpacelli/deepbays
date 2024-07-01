@@ -15,8 +15,8 @@ def filter_by_label(data_loader, labels, P, dataSeed):
     rp = rng.permutation(len(filtered_labels))
     filtered_data = filtered_data[rp[:P]]
     filtered_labels = filtered_labels[rp[:P]]
-    zero_one_labels = [0 if x  ==  labels[0] else 1 for x in filtered_labels]
-    return filtered_data, torch.tensor(zero_one_labels)
+    #zero_one_labels = [0 if x  ==  labels[0] else 1 for x in filtered_labels]
+    return filtered_data, filtered_labels #  torch.tensor(zero_one_labels)
 
 def getTransforms(self):
         T = t.Compose([
@@ -38,7 +38,7 @@ def normalizeDataset(data, testData):
     return data, testData
 
 class mnist_dataset: 
-    def __init__(self, N, selectedLabels, dataSeed = 123): #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
+    def __init__(self, N, selectedLabels, dataSeed = 1234): #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
         self.N = N
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels

@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import fsolve
-from kernels import kernel_erf, kernel_relu, kernel_id, computeKmatrix, computeKmatrixTorch, kernel_erf_torch
+from kernels import *
 import torch
 from torch.autograd import Variable 
 
@@ -68,53 +68,82 @@ class FC_1HL_multiclass():
         print("\nis exact solution close to zero?", isClose)   
         print(f"{1} hidden layer optQ is {self.optQ}")
 
-    def preprocess(self, data, labels):
-        self.P, self.N0 = data.shape
+    def preprocess(self, Xtrain, Ytrain):
+        self.P, self.N0 = Xtrain.shape
         self.corrNorm = 1/(self.N0 * self.l0)
-        self.C = np.dot(data, data.T) * self.corrNorm
+        self.Xtrain = Xtrain
+        self.C = np.dot(Xtrain, Xtrain.T) * self.corrNorm
         self.CX = self.C.diagonal()
         self.K = torch.tensor(self.kernel(self.C.diagonal()[:,None], self.C, self.C.diagonal()[None,:]), requires_grad = False) 
-        y = np.array(labels.squeeze())
+        y = np.array(Ytrain.squeeze())
         self.labelsOfInterest = list(set(y))
-
         self.labelToIndex = {label: index for index, label in enumerate(self.labelsOfInterest)}
 
         yOneHot = torch.zeros((self.P, self.k))
         for i in range(self.P):
             labelIndex = self.labelToIndex[y[i].item()]
             yOneHot[i, labelIndex] = 1.0
-            
+        self.yOneHot = yOneHot  
         tempYReshaped = yOneHot[:,0];
         for i in range(1,self.k):
             tempYReshaped = np.concatenate((tempYReshaped, yOneHot[:,i]))
         self.y = torch.tensor(tempYReshaped)
 
-    def computeTestsetKernels(self, data, testData):
-        self.Ptest = len(testData)
-        self.C0 = np.dot(testData, testData.T).diagonal() * self.corrNorm
-        self.C0X = np.dot(testData, data.T) * self.corrNorm 
+    def computeTestsetKernels(self, Xtest):
+        self.Ptest = len(Xtest)
+        self.C0 = np.dot(Xtest, Xtest.T).diagonal() * self.corrNorm
+        self.C0X = np.dot(Xtest, self.Xtrain.T) * self.corrNorm 
+        self.K0X = self.kernel(self.C0[:,None], self.C0X, self.CX[None, :])
+        self.K0 = self.kernel(self.C0, self.C0, self.C0)
     
-    def computeAveragePrediction(self, data, labels, testData, testLabels):
-        self.computeTestsetKernels(data, testData)
-        rK = np.zeros((self.k*self.P, self.k* self.P))
-        rK0X = np.zeros((self.k*self.Ptest, self.k* self.P))
-        rK0 = np.zeros((self.k* self.Ptest))
+    def computePrediction(self, Xtest):
+        self.computeTestsetKernels(Xtest)
+
+        rK = np.zeros((self.k*self.P, self.k* self.P)) #fast-varying index is mu.
+        rK0 = np.zeros(self.k*self.Ptest)
+        rK0X = np.zeros(( self.k*self.Ptest, self.k* self.P))
+
+        for i in range(self.k):
+            ind1 = i*self.P
+            for j in range(self.k):
+                ind2 = j*self.P
+                rK[ind1:ind1+self.P,ind2:ind2+self.P] = self.optQ[i,j]*self.K/self.l1      
         
         for i in range(self.k):
-            rK0temp = np.zeros((self.Ptest))
+            ind1 = i*self.Ptest
+            rK0[ind1:ind1+self.Ptest] = self.optQ[i,i]*self.K0 /self.l1 
             for j in range(self.k):
-                ind1 = i*self.P
                 ind2 = j*self.P
-                ind3 = i*self.Ptest
-                rKX = self.C.diagonal() 
-                rK0X[ind3:ind3+self.Ptest, ind2:ind2+self.P] = self.optQ[i,j] * self.kernel(self.C0[:,None], self.C0X, rKX[None, :]) /self.l1
-                rK0temp = np.add( self.optQ[i,j] * self.kernel(self.C0, self.C0, self.C0)/self.l1, rK0temp)
-                rK[ind1:ind1+self.P,ind2:ind2+self.P] = self.optQ[i,j]*self.K/self.l1  
-            rK0[ind3:ind3+self.Ptest] = rK0temp
+                rK0X[ind1:ind1+self.Ptest,ind2:ind2+self.P] = self.optQ[i,j]*self.K0X  /self.l1
+
+        self.rK0X = rK0X
+        self.rK0 = rK0
         A = rK + (self.T) * np.eye(self.P*self.k)
-        invK = np.linalg.inv(A)
-        K0_invK = np.matmul(rK0X, invK)
-        bias = testLabels - np.dot(K0_invK, self.y) 
-        var = rK0 - np.sum(K0_invK * rK0X, axis=1)
-        predLoss = bias**2 + var
-        return predLoss.mean().item(), (bias**2).mean().item()
+        self.invK = np.linalg.inv(A)
+        rKY = np.matmul(self.invK, self.y)
+
+        self.prediction = np.matmul(rK0X, rKY)
+        yPred = self.prediction.reshape(self.Ptest,self.k)
+        return yPred
+
+    def computeAverageLoss(self, Ytest):
+        yTest = np.array(Ytest.squeeze())
+        yTestOneHot = torch.zeros((self.Ptest, self.k))
+        for i in range(self.Ptest):
+            labelIndex = self.labelToIndex[yTest[i].item()]
+            yTestOneHot[i, labelIndex] = 1.0
+        tempYTestReshaped = yTestOneHot[:,0]
+        for i in range(1,self.k):
+            tempYTestReshaped = np.concatenate((tempYTestReshaped, yTestOneHot[:,i]))
+        self.Ytest = torch.tensor(tempYTestReshaped)
+
+        bias = (self.Ytest-self.prediction)**2
+        biasPerClass = bias.reshape(self.Ptest,self.k).mean(axis = 0) # array of dimension k. each entry is average (on testset) bias for that class
+        
+        extVar = np.matmul(self.rK0X,np.matmul(self.invK, self.rK0X.T))
+        var = self.rK0 - np.diag(extVar)
+        varPerClass = var.reshape(self.Ptest,self.k).mean(axis = 0) # array of dimension k. each entry is average (on testset) var for that class
+
+        predLoss = biasPerClass.mean().item()+ varPerClass.mean().item()
+
+        return predLoss, biasPerClass, varPerClass

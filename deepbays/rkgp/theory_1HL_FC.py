@@ -42,25 +42,19 @@ class FC_1HL():
         self.K0 =  self.kernel(self.C0, self.C0, self.C0) 
         self.K0X = self.kernel(self.C0[:,None], self.C0X, self.CX[None, :])
     
-    def computeAverageLoss(self, Xtest, Ytest):
-        self.computeTestsetKernels(Xtest)
-        self.orderParam = self.optQ / self.l1
-        A = self.orderParam * self.K + (self.T) * np.eye(self.P)
-        invK = np.linalg.inv(A)
-        rK0 = self.orderParam * self.K0 
-        rK0X = self.orderParam * self.K0X
-        K0_invK = np.matmul(rK0X, invK)
-        bias = Ytest - np.dot(K0_invK, self.Ytrain) 
-        var = rK0 - np.sum(K0_invK * rK0X, axis=1)
-        predLoss = bias**2 + var
-        return predLoss.mean().item(), (bias**2).mean().item(), var
-
     def computePrediction(self, Xtest):
         self.computeTestsetKernels(Xtest)
         self.orderParam = self.optQ / self.l1
         A = self.orderParam * self.K + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
-        rK0X = self.orderParam * self.K0X
-        K0_invK = np.matmul(rK0X, invK)
-        prediction =  np.dot(K0_invK, self.Ytrain) 
-        return prediction
+        self.rK0X = self.orderParam * self.K0X
+        self.K0_invK = np.matmul(self.rK0X, invK)
+        self.Ypred =  np.dot(self.K0_invK, self.Ytrain)
+        return self.Ypred
+    
+    def computeAverageLoss(self, Ytest):
+        self.rK0 = self.orderParam * self.K0 
+        bias = Ytest - self.Ypred 
+        var = self.rK0 - np.sum(self.K0_invK * self.rK0X, axis=1)
+        predLoss = bias**2 + var 
+        return predLoss.mean().item(), (bias**2).mean().item(), var 
