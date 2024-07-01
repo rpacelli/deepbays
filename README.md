@@ -12,13 +12,13 @@ The main function for defining and working with RKGP models is **RKGP** function
 
 - `RKGP(L, N1, l0, l1, T ,act = "erf", model_type="FC")`
   - **Parameters**:
-	 - `L`: Number of layers.
-            - `N1`: Number of neurons in the hidden layer. If `L>1`, a list containing the `L` lengths. 
-            - `l0`: Input layer Gaussian prior. If `L>1`, a list containing the `L` lengths.
-            - `l1`: Hidden layer Gaussian prior. If `L>1`, a list containing the `L` lengths.
-            - `act`: Activation function (choose among "erf", "relu").
-            - `T`: Temperature parameter.
-            - `model_type`: Type of model (default is "FC" for fully connected, choose "CNN" for convolutional).
+	- `L`: Number of layers.
+    - `N1`: Number of neurons in the hidden layer. If `L>1`, a list containing the `L` lengths. 
+    - `l0`: Input layer Gaussian prior. If `L>1`, a list containing the `L` lengths.
+    - `l1`: Hidden layer Gaussian prior. If `L>1`, a list containing the `L` lengths.
+    - `act`: Activation function (choose among "erf", "relu").
+    - `T`: Temperature parameter.
+    - `model_type`: Type of model (default is "FC" for fully connected, choose "CNN" for convolutional).
   - **Returns**: An instance of the RKGP model.
 
 The RKGP of a `1HL` fully-connected neural network with `N1 = 500` units at `T = 0.1` in the hidden layer is implemented as follows : 
