@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.optimize import minimize
 from .kernels import *
+## DEBUGGED VERSION, PASSED ALL TESTS 01/07/2024
 
 class FC_1HL():
     def __init__(self, N1, l0, l1, act, T):
