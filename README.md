@@ -10,9 +10,9 @@ bash pip install deepbays
 #### Defining the model 
 The main function for defining and working with RKGP models is **RKGP** function that initialises the model with the specified parameters.
 
-- `RKGP(L, N1, l0, l1, T ,act = "erf", model_type="FC")`
+- `RKGP(L, widths, D, priors, T, act = "erf", model_type = "FC")`
   - **Parameters**:
-	- `L`: Number of layers.
+    - `L`: Number of layers. Must be integer and positive.
     - `N1`: Number of neurons in the hidden layer. If `L>1`, a list containing the `L` lengths. 
     - `l0`: Input layer Gaussian prior. If `L>1`, a list containing the `L` lengths.
     - `l1`: Hidden layer Gaussian prior. If `L>1`, a list containing the `L` lengths.
