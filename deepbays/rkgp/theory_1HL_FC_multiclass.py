@@ -60,14 +60,16 @@ class FC_1HL_multiclass():
                 count = count + 1;
         return matrix
 
-    def minimizeAction(self, Q0):
-        self.optVar = fsolve(self.gradientEq, self.fromQtoVariables(Q0))
+    def minimizeAction(self, x0 = 1):
+        if isinstance(x0,(float,int)):
+            x0 = np.eye(self.k)
+        self.optVar = fsolve(self.gradientEq, self.fromQtoVariables(x0))
         self.optQ = self.fromVariablesToQ(self.optVar)
         print(self.gradientEq(self.optVar))
         isClose = np.isclose(self.gradientEq(self.optVar), np.zeros(self.numOfVariables), atol=1e-05) 
         self.converged = isClose.all()
         print("\nis exact solution close to zero?", isClose)   
-        print(f"{1} hidden layer optQ is {self.optQ}")
+        #print(f"optQ is {self.optQ}")
 
     def preprocess(self, Xtrain, Ytrain):
         self.P, self.N0 = Xtrain.shape
@@ -145,6 +147,6 @@ class FC_1HL_multiclass():
         var = self.rK0 - np.diag(extVar)
         varPerClass = var.reshape(self.Ptest,self.k).mean(axis = 0) # array of dimension k. each entry is average (on testset) var for that class
 
-        predLoss = biasPerClass.mean().item()+ varPerClass.mean().item()
+        predLoss = biasPerClass.mean().item() + varPerClass.mean().item()
 
         return predLoss, biasPerClass, varPerClass
