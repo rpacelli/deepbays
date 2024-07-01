@@ -3,6 +3,8 @@ from scipy.optimize import minimize
 from . import rkgp
 import time
 
+#L needs to be the first parameter
+
 def RKGP(N1, l0, l1, act, T, L, model_type = "FC"):
     if L == 1 :
         netName = "1HL"
