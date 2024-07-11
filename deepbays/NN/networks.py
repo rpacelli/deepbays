@@ -6,6 +6,7 @@ import torch.nn.init as init
 import torch.optim as optim
 from torch import nn
 from torch.optim import Optimizer
+import torch.nn.functional as F
 
 class Erf(torch.nn.Module):
     def __init__(self):
@@ -25,6 +26,9 @@ class Norm(torch.nn.Module):
         self.norm = norm
     def forward(self, x):
         return x/self.norm
+    
+def relu(x):
+    return x if x > 0 else 0
 
 class FCNet: 
     def __init__(self, N0, N1,  L):

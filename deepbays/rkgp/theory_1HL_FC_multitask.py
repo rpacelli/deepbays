@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from scipy.optimize import fsolve
-from .kernels import kernel_erf, kernel_relu
+from .. import kernels
 
 def kmatrix(Cmm,Cmn,Cnn,kernel):
     P1,P2 = Cmn.shape
@@ -19,7 +19,7 @@ class FC_1HL_multitask():
         self.l0 = lambda0
         self.l1 = lambda1 
         self.T = T
-        self.kernel = eval(f"kernel_{act}")
+        self.kernel = eval(f"kernels.kernel_{act}")
 
     def effectiveAction(self, barQ, K1, K2, Kmix,labels):
         Ptot = self.Ps + self.Pt

@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import fsolve
-from .kernels import *
+from .. import kernels
 import torch
 
 class FC_deep():
@@ -9,8 +9,8 @@ class FC_deep():
         self.l0 = l0
         self.l1 = l1 
         self.T = T
-        self.kernelTorch = eval(f"kernel_{act}_torch")
-        self.kernel = eval(f"kernel_{act}")
+        self.kernelTorch = eval(f"kernels.kernel_{act}_torch")
+        self.kernel = eval(f"kernels.kernel_{act}")
         self.L = L
         
     def effectiveAction(self, Q):

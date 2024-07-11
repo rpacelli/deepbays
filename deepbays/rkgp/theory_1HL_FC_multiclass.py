@@ -1,20 +1,21 @@
 import numpy as np
 from scipy.optimize import fsolve
-from kernels import *
 import torch
 from torch.autograd import Variable 
+from .. import kernels
 ## DEBUGGED VERSION. PASSED ALL TESTS ON 01/07/2024
 
 class FC_1HL_multiclass():
-    def __init__(self, N1, l0, l1, act, T, k):
+    def __init__(self, N1, k, T, l0 = 1.0, l1 = 1.0, act = "erf"):
         self.N1 = N1
         self.l0 = l0
         self.l1 = l1 
         self.T = T
-        self.kernelTorch = eval(f"kernel_{act}_torch")
-        self.kernel = eval(f"kernel_{act}")
+        self.kernelTorch = eval(f"kernels.kernel_{act}_torch")
+        self.kernel = eval(f"kernels.kernel_{act}")
         self.k = k
         self.numOfVariables = int(self.k*(self.k+1)/2)
+        #self.optQ = None
         
     def effectiveAction(self, *args):
         Q = torch.zeros((self.k, self.k))
@@ -70,6 +71,9 @@ class FC_1HL_multiclass():
         self.converged = isClose.all()
         print("\nis exact solution close to zero?", isClose)   
         #print(f"optQ is {self.optQ}")
+    
+    def setIW(self):
+        self.optQ = np.eye(self.k)
 
     def preprocess(self, Xtrain, Ytrain):
         self.P, self.N0 = Xtrain.shape
@@ -99,7 +103,7 @@ class FC_1HL_multiclass():
         self.K0X = self.kernel(self.C0[:,None], self.C0X, self.CX[None, :])
         self.K0 = self.kernel(self.C0, self.C0, self.C0)
     
-    def computePrediction(self, Xtest):
+    def predict(self, Xtest):
         self.computeTestsetKernels(Xtest)
 
         rK = np.zeros((self.k*self.P, self.k* self.P)) #fast-varying index is mu.
@@ -129,7 +133,7 @@ class FC_1HL_multiclass():
         yPred = self.prediction.reshape(self.Ptest,self.k)
         return yPred
 
-    def computeAverageLoss(self, Ytest):
+    def averageLoss(self, Ytest):
         yTest = np.array(Ytest.squeeze())
         yTestOneHot = torch.zeros((self.Ptest, self.k))
         for i in range(self.Ptest):

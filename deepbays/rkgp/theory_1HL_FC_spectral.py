@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.optimize import minimize
-from .kernels import *
 import time
+from .. import kernels
 
 class FC_1HL_spectral():
     def __init__(self, N1, l0, l1, act, T, theta):
@@ -9,7 +9,7 @@ class FC_1HL_spectral():
         self.l0 = l0
         self.l1 = l1 
         self.T = T
-        self.kernel = eval(f"kernel_{act}")
+        self.kernel = eval(f"kernels.kernel_{act}")
         #self.theta = theta #fraction of shut nodes
         self.theta = theta #fraction of open nodes 
 

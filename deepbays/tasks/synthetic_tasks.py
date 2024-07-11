@@ -3,29 +3,7 @@ import torch, torchvision, torchvision.transforms as t
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-
-
-class perceptron(nn.Module):
-    def __init__(self, input_dim):
-        super(perceptron, self).__init__()
-        self.fc1 = nn.Linear(input_dim, 1)
-    def forward(self, x):
-        x = F.tanh(self.fc1(x))
-        return x
-      
-# Define a simple 1-hidden-layer neural network
-class Simple1HLNet(nn.Module):
-    def __init__(self, input_dim, hidden_dim):
-        super(Simple1HLNet, self).__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, 1)
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.tanh(self.fc2(x))
-        return x
-
-def relu(x):
-    return x if x > 0 else 0
+from ..NN import *
 
 class random_dataset: 
     def __init__(self, N):
@@ -99,11 +77,13 @@ class hmm_dataset:
 
 
 class synthetic_1hl_dataset: 
-    def __init__(self, N, hidden_dim):
+    def __init__(self, N, hidden_dim, act, dataSeed = 1234):
         self.N = N
         self.hidden_dim = hidden_dim
-        self.model = Simple1HLNet(N, hidden_dim)
+        model = FCNet(N, hidden_dim, L=1)
+        self.model = model.Sequential(bias = False, act_func=act)
         # Initialize the model parameters
+        self.dataSeed = dataSeed
         self.initialize_model()
 
     def initialize_model(self):
@@ -114,9 +94,9 @@ class synthetic_1hl_dataset:
                 nn.init.normal_(param, mean=0, std=1)
     
     def make_data(self, P, Ptest):
-        inputs = torch.randn((P, self.N))
-        test_inputs = torch.randn((Ptest, self.N))
-        
+        rng = np.random.RandomState(self.dataSeed) 
+        inputs = torch.tensor(rng.randn(P, self.N), dtype=torch.float)
+        test_inputs = torch.tensor(rng.randn(Ptest, self.N), dtype=torch.float)
         with torch.no_grad():
             targets = self.model(inputs).squeeze()
             test_targets = self.model(test_inputs).squeeze()
