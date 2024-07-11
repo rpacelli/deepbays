@@ -32,29 +32,35 @@ class FC_deep():
         f.backward()
         return Q.grad.data.detach().numpy()
 
-    def minimizeAction(self):
-        Q0 = np.ones(self.L)*2
+    def minimizeAction(self, Q0 = 1.):
+        if isinstance(Q0, int):
+            Q0 = np.ones(self.L)
         self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-8)
         isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) 
         self.converged = isClose.all()
         print("\nis exact solution close to zero?", isClose)   
         print(f"{self.L} hidden layer optQ is {self.optQ}")
 
-    def preprocess(self, data, labels):
-        self.P, self.N0 = data.shape
+    def setIW(self):
+        self.optQ = np.ones(self.L)
+
+    def preprocess(self, X, Y):
+        self.X = X
+        self.Y = Y
+        self.P, self.N0 = X.shape
         self.corrNorm = 1/(self.N0 * self.l0)
-        self.C = np.dot(data, data.T) * self.corrNorm
+        self.C = np.dot(X, X.T) * self.corrNorm
         self.CX = self.C.diagonal()
-        self.y = labels.squeeze().to(torch.float64)
+        self.y = Y.squeeze().to(torch.float64)
         self.y.requires_grad = False
 
-    def computeTestsetKernels(self, data, testData):
-        self.Ptest = len(testData)
-        self.C0 = np.dot(testData, testData.T).diagonal() * self.corrNorm
-        self.C0X = np.dot(testData, data.T) * self.corrNorm
+    def computeTestsetKernels(self, X, Xtest):
+        self.Ptest = len(Xtest)
+        self.C0 = np.dot(Xtest, Xtest.T).diagonal() * self.corrNorm
+        self.C0X = np.dot(Xtest, X.T) * self.corrNorm
     
-    def predict(self, data, labels, testData, testLabels):
-        self.computeTestsetKernels(data, testData)
+    def predict(self, Xtest):
+        self.computeTestsetKernels(self.X, Xtest)
         rKL = self.C
         rK0L = self.C0 
         rK0XL = self.C0X
@@ -67,7 +73,13 @@ class FC_deep():
         A = rKL + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
         K0_invK = np.matmul(rK0XL, invK)
-        bias = testLabels - np.dot(K0_invK, labels) 
-        var = rK0L - np.sum(K0_invK * rK0XL, axis=1)
+        self.rK0L = rK0L
+        self.K0_invK = K0_invK
+        self.rK0XL = rK0XL
+        self.Ypred = np.dot(K0_invK, self.Y)
+    
+    def averageLoss(self, Ytest):
+        bias = Ytest - self.Ypred  
+        var = self.rK0L - np.sum(self.K0_invK * self.rK0XL, axis=1)
         predLoss = bias**2 + var
-        return predLoss.mean().item(), (bias**2).mean().item()
+        return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
