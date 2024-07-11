@@ -85,6 +85,24 @@ The `tasks` module provides various datasets for training and testing.
 - `emnistABEL_CHJS`
 - `synthetic_1hl_dataset`
 - `perceptron_dataset`
+  
+Each dataset class typically includes the following methods:
+- `__init__(self, N0, classes, seed)`: Initializes the dataset with the specified parameters.
+ - N0: Input dimension of the dataset.
+ - classes: Tuple specifying the classes of interest.
+ - seed: Seed for reproducibility.
+ Example:
+ ```python
+ data_class = db.tasks.mnist_dataset(N0=784, classes=(0, 1), seed=1234)
+ ```
+- `make_data(self, P, Pt)`: Generates the data and labels for training and testing. Returns tuple containing training data, training labels, test data, and test labels
+ - P: Number of training examples.
+ - Pt: Number of test examples.
+
+ Example:
+ ```python
+ data, labels, test_data, test_labels = data_class.make_data(P=5, Pt=5)
+ ```
 #### `NN Module`
 The `NN` module provides utilities for training and evaluating neural networks.
 ##### Available Functions
