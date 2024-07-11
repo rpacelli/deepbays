@@ -14,10 +14,10 @@ def kmatrix(Cmm,Cmn,Cnn,kernel):
 
 
 class FC_1HL_multitask():
-    def __init__(self, N1, lambda0, lambda1, act, T):
+    def __init__(self, N1, T, l0 = 1., l1 = 1., act = "erf"):
         self.N1 = N1
-        self.l0 = lambda0
-        self.l1 = lambda1 
+        self.l0 = l0
+        self.l1 = l1 
         self.T = T
         self.kernel = eval(f"kernels.kernel_{act}")
 
@@ -30,7 +30,7 @@ class FC_1HL_multitask():
         assert rK[self.Ps:Ptot, self.Ps:Ptot].shape == (self.Pt, self.Pt)
         rK[self.Ps:Ptot, :self.Ps] = Kmix.T * barQ[2]
         rK[:self.Ps, self.Ps:Ptot] = Kmix * barQ[1]
-        A = rK / self.lambda1  +  self.T * torch.eye(Ptot) 
+        A = rK / self.l1  +  self.T * torch.eye(Ptot) 
         invA = torch.inverse(A)
         return (  barQ[0] + barQ[3]
                 - torch.log(barQ[0]*barQ[3]- barQ[1]*barQ[2])
@@ -49,10 +49,10 @@ class FC_1HL_multitask():
         self.Pt = len(inputs2)
         N0 = len(inputs1[0])  
         self.corrNorm = 1/(N0)
-        #diag = self.gamma + self.lambda0
+        #diag = self.gamma + self.l0
         #offDiag = -self.gamma
         offDiag = -self.gamma/2
-        diag = self.lambda0
+        diag = self.l0
         regMat = [[diag, offDiag],[offDiag, diag]]
         invReg = np.linalg.inv(regMat)
 
@@ -84,7 +84,7 @@ class FC_1HL_multitask():
             predLoss2 += self.computeSinglePrediction(data,labels,x,y,optQ, 2, kernel, K1, K2, Kmix, self.corrNorm, invReg)
 
         with open(theoryFile, "a+") as f: 
-            print(self.N1, self.Ps, self.Pt, self.T, self.gamma, self.lambda0, self.lambda1, optQ[0][0], optQ[0][1], optQ[1][1], predLoss1/self.Ptest, predLoss2/self.Ptest, self.Ptest, self.q, self.eta, self.rho, isClose.all(), file = f)
+            print(self.N1, self.Ps, self.Pt, self.T, self.gamma, self.l0, self.l1, optQ[0][0], optQ[0][1], optQ[1][1], predLoss1/self.Ptest, predLoss2/self.Ptest, self.Ptest, self.q, self.eta, self.rho, isClose.all(), file = f)
 
         print("test loss first task ", predLoss1 / self.Ptest , "\ntest loss second task ", predLoss2 / self.Ptest )
 
@@ -98,13 +98,13 @@ class FC_1HL_multitask():
         for mu in range(self.Ps):
             corrXData = np.dot(x,data[mu]) * corrNorm * invReg[task-1][0] 
             corrDataData = np.dot(data[mu],data[mu]) * corrNorm * invReg[0][0]
-            rKmu[mu] = (optQ[task-1,0]/self.lambda1) * kernel(corrXX,corrXData,corrDataData) 
+            rKmu[mu] = (optQ[task-1,0]/self.l1) * kernel(corrXX,corrXData,corrDataData) 
         for mu in range(self.Pt):
             corrXData2 = np.dot(x,data[self.Ps + mu]) * corrNorm * invReg[task-1][1]
             corrData2Data2 = np.dot(data[self.Ps+mu],data[self.Ps +mu]) * corrNorm * invReg[1][1]
-            rKmu[self.Ps+mu] = (optQ[task-1,1]/self.lambda1) * kernel(corrXX,corrXData2,corrData2Data2)
+            rKmu[self.Ps+mu] = (optQ[task-1,1]/self.l1) * kernel(corrXX,corrXData2,corrData2Data2)
 
-        rKXX = (optQ[task-1,task-1]/self.lambda1) * kernel(corrXX,corrXX,corrXX) 
+        rKXX = (optQ[task-1,task-1]/self.l1) * kernel(corrXX,corrXX,corrXX) 
         rK = np.zeros((Ptot, Ptot), dtype=float)
         rK[:self.Ps, :self.Ps] = K1 * optQ[0, 0]
         rK[self.Ps:Ptot, self.Ps:Ptot] = K2 * optQ[1, 1]
@@ -113,7 +113,7 @@ class FC_1HL_multitask():
         #rK[:P, P:Ptot] = rK[P:Ptot, :P]
         #assert rK[self.Ps:Ptot, self.Ps:Ptot].shape == (self.Pt, self.Pt)
 
-        A = rK/self.lambda1 +  self.T * np.eye(Ptot) 
+        A = rK/self.l1 +  self.T * np.eye(Ptot) 
         invA = np.linalg.inv(A)
         rKmu_invA = np.matmul(rKmu, invA)
         bias = y - np.dot(rKmu_invA, labels)

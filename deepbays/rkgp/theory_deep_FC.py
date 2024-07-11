@@ -4,7 +4,7 @@ from .. import kernels
 import torch
 
 class FC_deep():
-    def __init__(self, N1, l0, l1, act, T, L):
+    def __init__(self, L, N1, T, l0 = 1.0, l1 = 1.0, act = "erf"):
         self.N1 = N1
         self.l0 = l0
         self.l1 = l1 
@@ -53,7 +53,7 @@ class FC_deep():
         self.C0 = np.dot(testData, testData.T).diagonal() * self.corrNorm
         self.C0X = np.dot(testData, data.T) * self.corrNorm
     
-    def computeAveragePrediction(self, data, labels, testData, testLabels):
+    def predict(self, data, labels, testData, testLabels):
         self.computeTestsetKernels(data, testData)
         rKL = self.C
         rK0L = self.C0 

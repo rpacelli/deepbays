@@ -35,35 +35,37 @@ def RKGP(L: int,
     """
     
     morespecs = ""
+    assert (isinstance(L, int) and L > 0 ), "Number of layers must be integer and greater than 0."
+    initPriors = np.ones(L)
 
-    if not isinstance(L, (int)):
-        raise ValueError("Number of layers must be integer")
-    else:  
-        initPriors = np.ones(L)
-        if L == 1: 
-            netName = "1HL"
-            if len(priors) != 0:
-                assert len(priors) == 2, "For a 1HL network we need two gaussian priors."
-                l0 = priors[0]
-                l1 = priors[1]
-            else:
-                l0, l1 = initPriors
-            assert (isinstance(widths, int) or (len(widths) == 1 and isinstance(widths[0], int))), "Size of hidden layer must be integer."
-            if isinstance(widths, int):
-                N1 = widths
-            else: 
-                N1 = widths[0]
-            assert (isinstance(D, int) and D>=1), "Number of outputs must be integer and greater than 0."
-            if D == 1: 
-                args = [N1, T, l0, l1, act]
-            else: 
-                morespecs = "_multiclass"
-                args = [N1, D, T, l0, l1, act]
-        elif L > 1: 
-            netName = "deep"
+    if isinstance(widths, int): ## if N1 is integer and L is greater than 1, assign N1 neurons to each layer.
+        assert widths > 0 , "Size of hidden layer must be greater than 0."
+        widths = [widths for _ in range(L)]
+    else:
+        assert len(widths) == L, "Widths must match number of hidden layers." 
+
+    if L == 1: 
+        netName = "1HL"
+        if len(priors) != 0:
+            assert len(priors) == 2, "For a 1HL network we need two gaussian priors."
+            l0, l1 = priors[0], priors[1]
+        else:
+            l0, l1 = initPriors
+        assert (isinstance(widths, int) or (len(widths) == 1 and isinstance(widths[0], int))), "Size of hidden layer must be integer."
+        if isinstance(widths, int):
+            N1 = widths
         else: 
-            raise ValueError("Cannot build a network with 0 hidden layers.")
-
+            N1 = widths[0]
+        assert (isinstance(D, int) and D>=1), "Number of outputs must be integer and greater than 0."
+        if D == 1: 
+            args = [N1, T, l0, l1, act]
+        else: 
+            morespecs = "_multiclass"
+            args = [N1, D, T, l0, l1, act]
+    elif L > 1: 
+        netName = "deep"
+        l0, l1 = priors[0], priors[1] # each layer has prior l0 except for the last layer which has prior lambda1 ___ TO CHANGE 
+        args = [L, widths, T, l0, l1, act]
     if kernel_type == "best":
         if netName == "1HL" and D == 1 :
             morespecs = morespecs + "_corrected"

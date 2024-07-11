@@ -4,7 +4,7 @@ import time
 from .. import kernels
 
 class FC_1HL_spectral():
-    def __init__(self, N1, l0, l1, act, T, theta):
+    def __init__(self, theta, N1, T, l0 = 1., l1 = 1., act = "erf"):
         self.N1 = N1
         self.l0 = l0
         self.l1 = l1 
