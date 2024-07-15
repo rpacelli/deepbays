@@ -67,3 +67,44 @@ class FCNet:
         sequential = nn.Sequential(*modules)
         print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {act_func} actviation function', sequential)
         return sequential
+    
+class ConvNet(nn.Module):
+    def __init__(self, N0, Nc, mask = 7, stride = 7, padding = 1):
+        super(ConvNet, self).__init__()
+        self.N0 = N0 
+        self.Nc = Nc
+        self.mask = mask
+        self.stride = stride
+        self.padding = padding 
+
+    def Sequential(self, bias, act_func):
+        if act_func == "relu":
+            act = nn.ReLU()
+        elif act_func == "erf":
+            act = Erf()
+        elif act_func == "id":
+            act = Id()
+        
+        modules = []
+        # First convolutional layer
+        first_layer = nn.Conv2d(self.N0, self.Nc, kernel_size=self.maks, stride=self.stride, padding=self.padding, bias=bias)
+        init.normal_(first_layer.weight, std=1)
+        if bias:
+            init.constant_(first_layer.bias, 0)
+        modules.append(Norm(np.sqrt(self.mask)))
+        modules.append(first_layer)
+        modules.append(nn.Flatten())
+
+        self.N1 = (self.mask**2)*self.Nc 
+        modules.append(act)
+        modules.append(Norm(np.sqrt(self.N1)))
+        # Last layer
+        last_layer = nn.Linear(self.N1, 1, bias=bias)  
+        init.normal_(last_layer.weight, std=1) 
+        if bias:
+            init.normal_(last_layer.bias, std=1)
+        modules.append(last_layer)
+
+        sequential = nn.Sequential(*modules)
+        print(f'\nThe network has 1 convolutional hidden layer(s) of size {self.N1} with {act_func} activation function', sequential)
+        return sequential
