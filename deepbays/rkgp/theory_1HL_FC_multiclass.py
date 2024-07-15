@@ -3,10 +3,11 @@ from scipy.optimize import fsolve
 import torch
 from torch.autograd import Variable 
 from .. import kernels
+from .. import tasks
 ## DEBUGGED VERSION. PASSED ALL TESTS ON 01/07/2024
 
 class FC_1HL_multiclass():
-    def __init__(self, N1, k, T, l0 = 1.0, l1 = 1.0, act = "erf"):
+    def __init__(self, N1, k, T, l0 = 1.0, l1 = 1.0, act = "erf", oneHot = False):
         self.N1 = N1
         self.l0 = l0
         self.l1 = l1 
@@ -15,6 +16,7 @@ class FC_1HL_multiclass():
         self.kernel = eval(f"kernels.kernel_{act}")
         self.k = k
         self.numOfVariables = int(self.k*(self.k+1)/2)
+        self.oneHot = oneHot
         #self.optQ = None
         
     def effectiveAction(self, *args):
@@ -81,20 +83,17 @@ class FC_1HL_multiclass():
         self.Xtrain = Xtrain
         self.C = np.dot(Xtrain, Xtrain.T) * self.corrNorm
         self.CX = self.C.diagonal()
-        self.K = torch.tensor(self.kernel(self.C.diagonal()[:,None], self.C, self.C.diagonal()[None,:]), requires_grad = False) 
-        y = np.array(Ytrain.squeeze())
-        self.labelsOfInterest = list(set(y))
-        self.labelToIndex = {label: index for index, label in enumerate(self.labelsOfInterest)}
+        self.K = torch.tensor(self.kernel(self.C.diagonal()[:,None], self.C, self.C.diagonal()[None,:]), requires_grad = False)
 
-        yOneHot = torch.zeros((self.P, self.k))
-        for i in range(self.P):
-            labelIndex = self.labelToIndex[y[i].item()]
-            yOneHot[i, labelIndex] = 1.0
-        self.yOneHot = yOneHot  
-        tempYReshaped = yOneHot[:,0];
+        if self.oneHot:
+            self.Ytrain = tasks.oneHotEncoding(Ytrain)
+        else:
+            self.Ytrain = Ytrain
+
+        tempYReshaped = self.Ytrain[:,0];
         for i in range(1,self.k):
-            tempYReshaped = np.concatenate((tempYReshaped, yOneHot[:,i]))
-        self.y = torch.tensor(tempYReshaped)
+            tempYReshaped = np.concatenate((tempYReshaped, self.Ytrain[:,i]))
+        self.y = torch.tensor(tempYReshaped, dtype=torch.float32)
 
     def computeTestsetKernels(self, Xtest):
         self.Ptest = len(Xtest)
@@ -134,14 +133,14 @@ class FC_1HL_multiclass():
         return yPred
 
     def averageLoss(self, Ytest):
-        yTest = np.array(Ytest.squeeze())
-        yTestOneHot = torch.zeros((self.Ptest, self.k))
-        for i in range(self.Ptest):
-            labelIndex = self.labelToIndex[yTest[i].item()]
-            yTestOneHot[i, labelIndex] = 1.0
-        tempYTestReshaped = yTestOneHot[:,0]
+
+        if self.oneHot:
+            self.Ytest = tasks.oneHotEncoding(Ytest, verbose=False)
+        else:
+            self.Ytest = Ytest
+        tempYTestReshaped = self.Ytest[:,0]
         for i in range(1,self.k):
-            tempYTestReshaped = np.concatenate((tempYTestReshaped, yTestOneHot[:,i]))
+            tempYTestReshaped = np.concatenate((tempYTestReshaped, self.Ytest[:,i]))
         self.Ytest = torch.tensor(tempYTestReshaped)
 
         bias = (self.Ytest-self.prediction)**2

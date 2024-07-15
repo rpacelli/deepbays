@@ -37,6 +37,22 @@ def normalizeDataset(data, testData):
     testData = testData /std
     return data, testData
 
+def oneHotEncoding(y, verbose=True):
+    uniqueClasses = torch.unique(y);
+    classToIndex = {cls.item(): idx for idx, cls in enumerate(uniqueClasses)};
+    mappedTensor = torch.tensor([classToIndex[val.item()] for val in y]);
+    numClasses = len(uniqueClasses);
+    oneHotEncoded = F.one_hot(mappedTensor, num_classes=numClasses);
+    if verbose:
+        print("Performing One Hot Encoding of your data:")
+        print(f"> num of classes: {numClasses}")
+        print(f"> class dictionary (from old to new):")
+        for newClass, oldClass in enumerate(classToIndex):
+            tempArray = np.zeros(numClasses);
+            tempArray[newClass] = 1;
+            print(f"   old class : {oldClass} >> new class {tempArray}")
+    return oneHotEncoded;
+
 class mnist_dataset: 
     def __init__(self, N, selectedLabels, dataSeed = 1234): #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
         self.N = N
