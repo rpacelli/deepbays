@@ -25,7 +25,8 @@ class FC_1HL():
     def minimizeAction(self, x0 = 1.): # x0 is initial condition
         optQ = minimize(self.effectiveAction, x0, bounds = ((1e-8,np.inf),) , tol=1e-12)
         self.optQ = (optQ.x).item()
-    
+        assert self.optQ > 0 , "Unphysical solution found (Q is negative)."
+
     def setIW(self):
         self.optQ = 1
 
@@ -184,9 +185,11 @@ class FC_1HL_nonodd(): # the order parameter associated with average norm is cal
         self.optQ = fsolve(self.computeGrad, x0, xtol = 1e-8)
         self.Q = self.optQ[0]
         self.bQ = self.optQ[1]
+        assert self.Q > 0, "Unphysical solution found (Q is negative)."
         print(f"\nPoint where the gradient is approximately zero: {self.optQ}")
         isClose = np.isclose(self.computeGrad(self.optQ), [0.0, 0.0]) 
-        print("\nis exact solution close to zero?", isClose) 
+        assert isClose.all(), "Wrong solution found, gradient is not 0. Try changing initial condition."
+        #print("\nis exact solution close to zero?", isClose) 
     
     def setIW(self):
         self.Q = 1.
