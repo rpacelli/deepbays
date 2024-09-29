@@ -65,7 +65,6 @@ class CONV_deep():
         for i in range(self.numPatches):
             #print(patchX[:,i].reshape(self.P, -1))
             self.Xtrain[i] = patchX[:,i].reshape(self.P, -1)
-
         CXX = np.zeros((self.numPatches,self.numPatches), dtype = object)
         for i in range( self.numPatches):
             for j in range(i, self.numPatches):
