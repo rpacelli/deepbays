@@ -24,9 +24,7 @@ class CONV_deep():
                 Kij = torch.tensor(self.CXX[i][j])
                 Kii = torch.tensor(self.CXX[i][i])
                 Kjj = torch.tensor(self.CXX[j][j])
-                #print(Kij.shape)
                 rKij =  Q[i][j] * kernels.computeKmatrixMultipleCTorch(Kii, Kij, Kjj, self.kernelTorch) / (self.l1*self.numPatches)
-                #print(Kij)
                 rKCumulate = torch.add(rKCumulate , rKij)
         A = rKCumulate +  self.T * torch.eye(self.P) 
         invA = torch.inverse(A)
@@ -41,16 +39,17 @@ class CONV_deep():
         f.backward()
         return Q.grad.data.detach().numpy()
 
-    def minimizeAction(self, Q0 = 1.):
+    def minimizeAction(self, Q0 = 1., minimizationTol = 1e-6, nStep = 100000, gradTol = 1e-3):
         if isinstance(Q0, float):
-            Q0 = np.eye(self.numPatches) 
-        #Q0 = np.eye(self.numPatches)*4
-        self.optQ = fsolve(self.computeActionGrad, Q0.ravel(), xtol = 1e-8)
+            Q0 = np.eye(self.numPatches)
+        self.optQ = fsolve(self.computeActionGrad, Q0.ravel(), xtol = minimizationTol, maxfev = int(nStep*(self.numPatches**2)))
         self.optQ = np.reshape(self.optQ, (self.numPatches,self.numPatches))
-        isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) 
+        self.grad = self.computeActionGrad(self.optQ)
+        isClose = np.isclose(self.grad, np.zeros(self.L), atol=gradTol)
         self.converged = isClose.all()
-        print("\nis exact solution close to zero?", isClose)   
-        print(f"{self.L} hidden layer convolutional optQ is {self.optQ}")
+        print("\nis exact solution close to zero?\n", isClose)
+        print("\ngrad:\n", self.grad)
+        print(f"{self.L} hidden layer convolutional optQ is\n {self.optQ}")
 
     def setIW(self):
         self.optQ = np.eye(self.numPatches)
@@ -66,7 +65,6 @@ class CONV_deep():
         for i in range(self.numPatches):
             #print(patchX[:,i].reshape(self.P, -1))
             self.Xtrain[i] = patchX[:,i].reshape(self.P, -1)
-
         CXX = np.zeros((self.numPatches,self.numPatches), dtype = object)
         for i in range( self.numPatches):
             for j in range(i, self.numPatches):
