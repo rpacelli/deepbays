@@ -87,7 +87,7 @@ class ConvNet(nn.Module):
         
         modules = []
         # First convolutional layer
-        first_layer = nn.Conv2d(self.N0, self.Nc, kernel_size=self.maks, stride=self.stride, padding=self.padding, bias=bias)
+        first_layer = nn.Conv2d(self.N0, self.Nc, kernel_size=self.mask, stride=self.stride, padding=self.padding, bias=bias)
         init.normal_(first_layer.weight, std=1)
         if bias:
             init.constant_(first_layer.bias, 0)
