@@ -45,11 +45,11 @@ class CONV_deep():
         self.converged = self.isClose.all()
         print("\nis grad close to zero?\n", self.isClose)
     
-    def forceMinimize(self, nStep = 5, gradTol = 1e-3):
+    def forceMinimize(self, nStepForce = 5, minimizationTol = 1e-6, nStepSolver = 100000, gradTol = 1e-3):
         i = 0
-        while (not self.converged) and (i < nStep):
+        while (not self.converged) and (i < nStepForce):
             print(f"\nsolution not found. Try #{i+1}:") 
-            self.minimizeAction(self.optQ)
+            self.minimizeAction(self.optQ, minimizationTol = minimizationTol, nStep = nStepSolver, gradTol = gradTol)
             i += 1     
     
     def setIW(self):
