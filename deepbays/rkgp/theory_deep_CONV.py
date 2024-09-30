@@ -113,12 +113,17 @@ class CONV_deep():
                 K0ii  = self.C00[i,i].diagonal() #diagonal in test data (mu*, mu*)
                 K0ij  = self.C00[i,j].diagonal() #diagonal in test data (mu*, mu*)
                 K0jj  = self.C00[j,j].diagonal() #diagonal in test data (mu*, mu*)
-                KijTemp.append(self.kernel(KXii[:, None], KXXij, KXjj[None, :]))
-                K0ijTemp.append(self.kernel(K0ii, K0ij, K0jj))
-                K0XijTemp.append(self.kernel(K0ii[:, None], K0Xij, KXjj[None, :]))
-                rKij   = self.orderParam[i,j] * self.kernel(KXii[:, None], KXXij, KXjj[None, :])
-                rK0Xij = self.orderParam[i,j] * self.kernel(K0ii[:, None], K0Xij, KXjj[None, :])
-                rK0ij  = self.orderParam[i,j] * self.kernel(K0ii, K0ij, K0jj) 
+                Ktrain = self.kernel(KXii[:, None], KXXij, KXjj[None, :])
+                Kmix   = self.kernel(K0ii[:, None], K0Xij, KXjj[None, :])
+                Ktest  = self.kernel(K0ii, K0ij, K0jj)
+                KijTemp.append(Ktrain)
+                K0ijTemp.append(Ktest)
+                K0XijTemp.append(Kmix)
+                rKij   = self.orderParam[i,j] * Ktrain
+                rK0Xij = self.orderParam[i,j] * Kmix
+                rK0ij  = self.orderParam[i,j] * Ktest
+                #print(self.orderParam[i,j])
+                #print(self.kernel(K0ii, K0ij, K0jj))
                 #rKX0ij = self.orderParam[i,j] * self.kernel(KXii[:, None], KX0ij, K0jj[None, :]) 
                 rKTemp   = np.add(rKTemp, rKij)
                 rK0Temp  = np.add(rK0Temp, rK0ij)
