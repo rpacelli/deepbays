@@ -101,7 +101,7 @@ class CONV_deep():
         rK0XTemp = np.zeros((self.Ptest, self.P), dtype = np.float64)
         rK0Temp  = np.zeros((self.Ptest, self.Ptest), dtype = np.float64)
         rKTemp   = np.zeros((self.P, self.P), dtype = np.float64)
-        Kij, K0Xij, K0ij = [], [], []
+        KijTemp, K0XijTemp, K0ijTemp = [], [], []
         #for l in range(self.L):
         for i in range(self.numPatches):
             for j in range(self.numPatches):
@@ -113,9 +113,9 @@ class CONV_deep():
                 K0ii  = self.C00[i,i].diagonal() #diagonal in test data (mu*, mu*)
                 K0ij  = self.C00[i,j].diagonal() #diagonal in test data (mu*, mu*)
                 K0jj  = self.C00[j,j].diagonal() #diagonal in test data (mu*, mu*)
-                Kij.append(self.kernel(KXii[:, None], KXXij, KXjj[None, :]))
-                K0ij.append(self.kernel(K0ii, K0ij, K0jj))
-                K0Xij.append(self.kernel(K0ii[:, None], K0Xij, KXjj[None, :]))
+                KijTemp.append(self.kernel(KXii[:, None], KXXij, KXjj[None, :]))
+                K0ijTemp.append(self.kernel(K0ii, K0ij, K0jj))
+                K0XijTemp.append(self.kernel(K0ii[:, None], K0Xij, KXjj[None, :]))
                 rKij   = self.orderParam[i,j] * self.kernel(KXii[:, None], KXXij, KXjj[None, :])
                 rK0Xij = self.orderParam[i,j] * self.kernel(K0ii[:, None], K0Xij, KXjj[None, :])
                 rK0ij  = self.orderParam[i,j] * self.kernel(K0ii, K0ij, K0jj) 
@@ -125,7 +125,7 @@ class CONV_deep():
                 rK0XTemp  = np.add(rK0XTemp, rK0Xij)
                 #rKX0Temp = np.add(rKX0Temp, rKX0ij)
         self.rK, self.rK0, self.rK0X = rKTemp, rK0Temp, rK0XTemp
-        self.Kij, self.K0Xij, self.K0ij = Kij, K0Xij, K0ij
+        self.Kij, self.K0Xij, self.K0ij = KijTemp, K0XijTemp, K0ijTemp
         #self.rKX0 = rKX0Temp
         #print("how different are they?\n", self.rKX0[0, :10] , "\n", self.rK0X.T[0, :10]) #they are the same
         #assert (self.rKX0 == self.rK0X.T).all()
