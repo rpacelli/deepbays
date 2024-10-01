@@ -99,7 +99,7 @@ class CONV_deep():
             self.orderParam /= self.numPatches
         #rKX0Temp = np.zeros((self.P, self.Ptest), dtype = np.float64)
         rK0XTemp = np.zeros((self.Ptest, self.P), dtype = np.float64)
-        rK0Temp  = np.zeros((self.Ptest, self.Ptest), dtype = np.float64)
+        rK0Temp  = np.zeros((self.Ptest, self.Ptest), dtype = np.float64) #to check why this is a matrix and then becomes vector
         rKTemp   = np.zeros((self.P, self.P), dtype = np.float64)
         KijTemp, K0XijTemp, K0ijTemp = [], [], []
         #for l in range(self.L):
@@ -147,3 +147,69 @@ class CONV_deep():
         #var = self.rK0 - np.sum( self.rKX0.T * self.K0_invK , axis=1) #equivalent to #var = self.rK0 - np.matmul(self.K0_invK, self.rKX0).diagonal() 
         predLoss = bias**2 + var
         return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
+    
+class validation_CONV():
+    def __init__(self, Kij, K0Xij, K0ij, Yval, Ytrain,  T, l0 = 1., l1 = 1., act = "erf", epsilon = 0.01):
+        self.Kij, self.K0ij, self.K0Xij = torch.tensor(Kij, requires_grad = False), torch.tensor(K0ij, requires_grad = False), torch.tensor(K0Xij, requires_grad = False)
+        self.numPatches = int(np.sqrt(len(Kij)))
+        self.P = len(self.Kij[0])
+        self.Pval = len(self.K0ij[0])
+        self.l0, self.l1, self.T, self.act = l0, l1, T, act
+        self.pool = False
+        #self.Yval = torch.tensor(Yval) #.squeeze()
+        self.Yval = Yval.to(torch.float64)
+        self.Ytrain = Ytrain.to(torch.float64)
+        self.kernel, self.kernelTorch = eval(f"kernels.kernel_{act}"), eval(f"kernels.kernel_{act}_torch")
+        self.epsilon = epsilon
+        
+    def bias(self, Q):
+        rK0XTemp = torch.zeros((self.Pval, self.P), dtype = torch.float64)
+        rK0Temp  = torch.zeros((self.Pval,self.Pval), dtype = torch.float64)
+        rKTemp   = torch.zeros((self.P, self.P), dtype = torch.float64)
+        for i in range(self.numPatches):
+            for j in range(self.numPatches):
+                index = int(self.indexMat[i,j])             
+                rKij   = Q[index] * self.Kij[i*self.numPatches+j] / (self.l1 * self.numPatches)
+                rK0Xij = Q[index] * self.K0Xij[i*self.numPatches+j] / (self.l1 * self.numPatches)
+                rK0ij  = Q[index] * self.K0ij[i*self.numPatches+j] / (self.l1 * self.numPatches)
+                rKTemp   = torch.add(rKTemp, rKij)
+                rK0Temp  = torch.add(rK0Temp, rK0ij)
+                rK0XTemp  = torch.add(rK0XTemp, rK0Xij)
+        self.rK, self.rK0, self.rK0X = rKTemp, rK0Temp, rK0XTemp 
+        A = rKTemp +  self.T * torch.eye(self.P) 
+        invA = torch.inverse(A)
+        self.K0_invK = torch.matmul(self.rK0X, invA)
+        self.Ypred = torch.matmul(self.K0_invK, self.Ytrain)
+        return torch.mean((self.Yval - self.Ypred)**2)
+    
+    def computeBiasGrad(self, Q):
+        Q = torch.tensor(Q, dtype = torch.float64, requires_grad = True)
+        f = self.bias(Q)
+        f.backward()
+        return Q.grad.data.detach().numpy()
+
+    def minimizeBias(self, Q0 = 1., minimizationTol = 1e-6, nStep = 100000, gradTol = 1e-3):
+        if isinstance(Q0, float):
+            Q0 = np.eye(self.numPatches)
+        numVariables = int(self.numPatches*(self.numPatches+1)/2)
+        self.indexMat = np.zeros((self.numPatches, self.numPatches))
+        Qstart = np.zeros(numVariables)
+        count = 0
+        for i in range(self.numPatches): 
+            for j in range(i, self.numPatches): 
+                self.indexMat[i,j] = count
+                self.indexMat[j,i] = count
+                Qstart[count] = Q0[i,j]
+                count +=1
+        optQ = Qstart - self.epsilon * self.computeBiasGrad(Qstart)
+        self.optQ = np.zeros((self.numPatches, self.numPatches))
+        count=0
+        for i in range(self.numPatches): 
+            for j in range(i, self.numPatches): 
+                self.optQ[i,j] = optQ[count]
+                self.optQ[j,i] = optQ[count]
+                count += 1
+        self.grad = self.computeBiasGrad(optQ) # gradient of the action 
+        self.isClose = np.isclose(self.grad, np.zeros(numVariables), atol=gradTol) #checks if gradient is smaller than gradTol
+        self.converged = self.isClose.all()
+        print("\nis grad close to zero?\n", self.isClose)
