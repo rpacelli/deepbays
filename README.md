@@ -15,67 +15,48 @@ pip install deepbays
 ## Theoretical background for understanding RKGPs
 The renormalized kernel gaussian process is ....
 This is all the material needed to reproduce experiments in the following papers: 
-## Core Functionality: `RKGP` Function
-The `RKGP` function is the main functionality of `deepbays`. It returns an RKGP model based on the specified parameters.
-```python
-RKGP(L: int, 
-	 widths: Union[int, List[int]], 
-	 D: int, 
-	 T: float, 
-	 priors: List[float] = [], 
-	 act: str = "erf", 
-	 model_type: str = "FC", 
-	 kernel_type: str = "best"):
-    """
-    Constructs a Renormalized Kernel Gaussian Process model.
 
-    Parameters:
-    - L (int): Number of hidden layers. Must be an integer.
-    - widths (int): Size of the hidden layer. Must be an integer.
-    - D (int): Number of network outputs. Must be an integer greater than 0.
-    - T (float): Temperature parameter.
-    - priors (list of float, optional): Gaussian priors for each layer. 
-       Defaults to None.
-    - act (str, optional): Activation function. Defaults to "erf".
-    - model_type (str, optional): Type of model. Defaults to "FC".
-    - kernel_type (str, optional): Kernel type. Defaults to "best". 
-       If kernel_type is "vanilla", first order corrections to the proportional limit will not be computed. 
-
-    Returns:
-    - model: The constructed RKGP model with specified parameters.
-
-    Raises:
-    - ValueError: If L is not an integer or is less than 1.
-    - ValueError: If widths is not an integer.
-    - ValueError: If D is not an integer or is less than 1.
-    - ValueError: If kernel_type is not "best" or "vanilla". 
-    """
-```
-To see all available options for RKGP, see Package Structure [[#RKGP Module]]
 ## Package Structure
 The `deepbays` package is organized into the following modules:
-- `rkgp`: Contains the core functionality for defining and training Gaussian Processes. This module is called by the RKGP function. 
+- `rkgp`: Contains the core functionality for defining and training Gaussian Processes.    
 - `tasks`: Contains datasets for training and testing.
 - `NN`: Contains neural network training and evaluation utilities. Can be used to compare the RKGP performance to that of the equivalent network model.
 - `kernels`: Contains kernel functions used in RKGPs
 
 ## Modules
 #### `rkgp` Module
-The `rkgp` module contains the core functionality for defining and training Gaussian Processes. You can directly define the RKGPs from this module, or you can use the RKGP function (which has a more standardized call for arguments). 
+The `rkgp` module contains the core functionality for defining and training Gaussian Processes. The GP classes of this module are named after the equivalent Bayesian Neural Networks in the proportional regime. 
+
+##### Parameters
+-`N1 : int` : Number of units in the hidden layer;
+-`T : float` : Temperature;
+-`D : int` : Number of outputs
+-`l0 : float`: Gaussian Prior of hidden layer(s) (default = 1.)
+-`l1 : float`: Gaussian Prior of last layer (default = 1.)
+-`act : str`: Activation function. (default = `erf`. Choose between Error Function : `erf`, Rectified Linear Unit : `relu`, Identity function: `id`) 
+-`Nc : int`: Number of channels (for the convolutional model)
+
 ##### Available Functions and Classes
-- `FC_1HL`: Single hidden layer fully connected GP model.
+- `FC_1HL`: 
     - Parameters: `N1`, `T`, `l0`, `l1`, `act`
-- `FC_1HL_multiclass`: Single hidden layer fully connected GP model for multiclass classification.
+    - Returns: GP model equivalent to a single-output one-hidden-layer fully-connected network with odd activation function (`erf`,`id`).
+- `FC_1HL_multiclass`: 
     - Parameters: `N1`, `D`, `T`, `l0`, `l1`, `act`
-- `FC_1HL_corrected`: Single hidden layer fully connected GP model with corrections.
+    - Returns: GP model for multiclass classification, equivalent to a fully-connected shallow network with multiple outputs.
+- `FC_1HL_corrected`:
     - Parameters: `N1`, `T`, `l0`, `l1`, `act`
-- `FC_deep`: Deep fully connected GP model.
+    - Returns: Single hidden layer fully connected GP model with corrections.
+- `FC_deep`: 
     - Parameters: (inferred from the rest of the code)
-- `FC_1HL_nonodd`
+    - Returns: GP model equivalent to a deep fully-connected neural network
+- `FC_1HL_nonodd`: 
+    - Parameters: `N1`, `T`, `l0`, `l1`, `act`
+    - Returns: GP model equivalent to a single-output one-hidden-layer fully-connected network with nonodd activation function (`relu`).
+- `CONV_1HL`:
+    - Parameters: `N1`, `T`, `l0`, `l1`, `act`
+    - Returns:  Shallow convolutional model with dense readout
 
-- `FC_1HL_spectral`
 
-- `FC_1HL_multitask`
 #### `tasks` Module
 The `tasks` module provides various datasets for training and testing.
 ##### Available Datasets
