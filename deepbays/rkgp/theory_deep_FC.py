@@ -4,10 +4,10 @@ from .. import kernels
 import torch
 
 class FC_deep():
-    def __init__(self, L, N1, T, l0 = 1.0, l1 = 1.0, act = "erf"):
+    def __init__(self, L, N1, T, priors = [1.0, 1.0], act = "erf"):
         self.N1 = N1
-        self.l0 = l0
-        self.l1 = l1 
+        self.l0 = priors[0]
+        self.l1 = priors[1:] 
         self.T = T
         self.kernelTorch = eval(f"kernels.kernel_{act}_torch")
         self.kernel = eval(f"kernels.kernel_{act}")
@@ -16,9 +16,9 @@ class FC_deep():
     def effectiveAction(self, Q):
         rKL = torch.tensor(self.C, dtype = torch.float64, requires_grad = False)
         for l in range(self.L):
-            orderParam = Q[l] / self.l1
+            orderParam = Q[l] / self.l1[l]
             #rKL = orderParam * computeKmatrixTorch(rKL, self.kernelTorch)
-            rKL = orderParam * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+            rKL = orderParam * self.kernelTorch(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
         A = rKL +  self.T * torch.eye(self.P) 
         invA = torch.inverse(A)
         return ( torch.sum(Q - torch.log(Q))
@@ -32,14 +32,14 @@ class FC_deep():
         f.backward()
         return Q.grad.data.detach().numpy()
 
-    def minimizeAction(self, Q0 = 1.):
-        if isinstance(Q0, int):
+    def optimize(self, Q0 = 1.):
+        if isinstance(Q0, float):
             Q0 = np.ones(self.L)
         self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-8)
         isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) 
         self.converged = isClose.all()
-        print("\nis exact solution close to zero?", isClose)   
-        print(f"{self.L} hidden layer optQ is {self.optQ}")
+        #print("\nis exact solution close to zero?", isClose)   
+        #print(f"{self.L} hidden layer optQ is {self.optQ}")
 
     def setIW(self):
         self.optQ = np.ones(self.L)
@@ -65,7 +65,7 @@ class FC_deep():
         rK0L = self.C0 
         rK0XL = self.C0X
         for l in range(self.L):
-            orderParam = self.optQ[l] / self.l1
+            orderParam = self.optQ[l] / self.l1[l]
             rKXL = rKL.diagonal() 
             rK0XL = orderParam * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
             rK0L = orderParam * self.kernel(rK0L, rK0L, rK0L)
@@ -77,6 +77,7 @@ class FC_deep():
         self.K0_invK = K0_invK
         self.rK0XL = rK0XL
         self.Ypred = np.dot(K0_invK, self.Y)
+        return self.Ypred
     
     def averageLoss(self, Ytest):
         bias = Ytest - self.Ypred  
