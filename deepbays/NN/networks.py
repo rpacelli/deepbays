@@ -31,88 +31,84 @@ def relu(x):
     return x if x > 0 else 0
 
 class FCNet: 
-    def __init__(self, N0, N1,  L):
-        self.N0 = N0 
-        self.N1 = N1
-        self.L = L
-    def Sequential(self, bias, act_func):
-        if act_func == "relu":
+    def __init__(self, 
+                 N0 : int, #input dimension
+                 N1 : int, #number of hidden layer units
+                 L : int, #number of hidden layers. depth = L+1
+                 bias : bool = False, #if True, add bias for each layer
+                 act : str = "erf" #activation function
+                 ):
+        self.N0, self.N1, self.L, self.act, self.bias = N0, N1, L, act, bias 
+
+    def Sequential(self):
+        if self.act == "relu":
             act = nn.ReLU()
-        elif act_func == "erf":
+        elif self.act == "erf":
             act = Erf()
-        elif act_func == "id":
+        elif self.act == "id":
             act = Id()
         modules = []
-        first_layer = nn.Linear(self.N0, self.N1, bias=bias)
+        first_layer = nn.Linear(self.N0, self.N1, bias=self.bias)
         init.normal_(first_layer.weight, std = 1)
-        if bias:
+        if self.bias:
             init.constant_(first_layer.bias,0)
         modules.append(Norm(np.sqrt(self.N0)))
         modules.append(first_layer)
         for l in range(self.L-1): 
             modules.append(act)
             modules.append(Norm(np.sqrt(self.N1)))
-            layer = nn.Linear(self.N1, self.N1, bias = bias)
+            layer = nn.Linear(self.N1, self.N1, bias = self.bias)
             init.normal_(layer.weight, std = 1)
-            if bias:
+            if self.bias:
                 init.normal_(layer.bias,std = 1)
             modules.append(layer)
         modules.append(act)
         modules.append(Norm(np.sqrt(self.N1)))
-        last_layer = nn.Linear(self.N1, 1, bias=bias)  
+        last_layer = nn.Linear(self.N1, 1, bias=self.bias)  
         init.normal_(last_layer.weight, std = 1) 
-        if bias:
+        if self.bias:
                 init.normal_(last_layer.bias,std = 1)
         modules.append(last_layer)
         sequential = nn.Sequential(*modules)
-        print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {act_func} actviation function', sequential)
+        print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function', sequential)
         return sequential
     
 class ConvNet:
-    def __init__(self, K, mask, L):
-        self.K = K
-        self.mask = mask #mask
-        self.L = L
+    def __init__(self, N0 : int,  #input size, necessary to compute normalization
+                 Nc : int,  # number of channels in internal layers
+                 mask : int, #mask
+                 stride : int, #striding of convolution
+                 bias : bool = False, #if True, add bias for each layer
+                 act :str = "erf", #activation function
+                 inputChannels : int = 1 #number of inputs channel, defaults for black and white image
+                 ):
+        self.Nc, self.N0, self.inputChannels, self.mask, self.stride, self.bias, self.act = Nc, N0, inputChannels, mask, stride, bias, act
 
-    def Sequential(self, input_channels, input_size, stride, bias, act_func):
-        if act_func == "relu":
+    def Sequential(self):
+        if self.act == "relu":
             act = nn.ReLU()
-        elif act_func == "erf":
+        elif self.act == "erf":
             act = Erf()
         modules = []
         # First convolutional layer
-        first_layer = nn.Conv2d(input_channels, self.K, self.mask, stride = stride, bias=bias)
+        first_layer = nn.Conv2d(self.inputChannels, self.Nc, self.mask, stride = self.stride, bias=self.bias)
         init.normal_(first_layer.weight, std=1)
-        if bias:
+        if self.bias:
             init.constant_(first_layer.bias, 0)
         modules.extend([Norm(self.mask), first_layer, act])
-        # Calculate the output size of the last convolutional layer to determine the number of input features for the fully connected layer
-        # Assume no padding 
-        conv_output_size = np.sqrt(input_size)
-        conv_output_size = (conv_output_size - self.mask) // stride + 1
-        # Additional L-1 convolutional layers
-        for l in range(self.L - 1):
-            layer = nn.Conv2d(self.K, self.K, self.mask,stride = stride, bias=bias) 
-            init.normal_(layer.weight, std=1)
-            conv_output_size = (conv_output_size - self.mask) // stride + 1
-            if bias:
-                init.constant_(layer.bias, 0)
-            modules.extend([Norm(np.sqrt(conv_output_size)),layer, act])
         # Flatten the tensor before the fully connected layer
         modules.append(nn.Flatten())
         with torch.no_grad(): 
             dummy_net_sequential = nn.Sequential(*modules)
-            out = dummy_net_sequential(torch.randn(int(np.sqrt(input_size)),int(np.sqrt(input_size))).unsqueeze(0))
-            FC_params = len(out.flatten())    
-        print(f"Number of parameters in the fully connected layer: {FC_params * input_channels}")
+            out = dummy_net_sequential(torch.randn(int(np.sqrt(self.N0)),int(np.sqrt(self.N0))).unsqueeze(0))
+            FC_params = len(out.flatten())  # number of parameters in the last layer   
         # Fully connected layer
-        last_layer = nn.Linear(FC_params, 1, bias=bias)
+        last_layer = nn.Linear(FC_params, 1, bias=self.bias)
         init.normal_(last_layer.weight, std=1)
-        if bias:
+        if self.bias:
             init.constant_(last_layer.bias, 0)
         modules.append(Norm(np.sqrt(FC_params)))
         modules.append(last_layer)
         sequential = nn.Sequential(*modules)
-        print(f'\nThe network has {self.L} convolutional hidden layer(s) with {self.K} kernels of size {self.f} and {act_func} activation function', sequential)
+        print(f'\nThe network has {self.L} convolutional hidden layer(s) with {self.Nc} kernels of size {self.mask} and {self.act} activation function', sequential)
         return sequential
-
