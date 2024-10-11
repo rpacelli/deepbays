@@ -24,8 +24,12 @@ def getTransforms(self):
             t.ToTensor(), 
             t.Grayscale(), 
             #t.Normalize((0.5),(0.24)),
-            t.Lambda(lambda x: torch.flatten(x))
         ])
+        if self.flatten:
+            T = t.Compose([
+                T, 
+                t.Lambda(lambda x: torch.flatten(x))
+            ])
         return T
 
 def normalizeDataset(data, testData):
@@ -59,7 +63,8 @@ class mnist_dataset:
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels
         self.dataSeed = dataSeed
-    def make_data(self, P, Ptest, batchSize = 60000):
+    def make_data(self, P, Ptest, batchSize = 60000, flatten = False):
+        self.flatten = flatten
         transformDataset = getTransforms(self)
         trainset = torchvision.datasets.MNIST(root = './data', train = True, download = True, transform = transformDataset)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size = batchSize)
@@ -78,7 +83,8 @@ class cifar_dataset:
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels
         self.dataSeed = dataSeed
-    def make_data(self, P, Ptest, batchSize = 60000):
+    def make_data(self, P, Ptest, batchSize = 60000, flatten = False):
+        self.flatten = flatten
         transformDataset = getTransforms(self)
         trainset = torchvision.datasets.CIFAR10(root = './data', train = True, download = True, transform = transformDataset)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size = batchSize, num_workers = 0)
