@@ -95,8 +95,8 @@ def train(net,data, labels, criterion, optimizer,T,lambda0,lambda1):
     inputs, targets = data, labels#).unsqueeze(1)
     optimizer.zero_grad()
     outputs = net(inputs)
-    loss = criterion(outputs.float(),targets.float())
-    #loss = criterion(outputs.float(), targets.float(),net,T,lambda0,lambda1)
+    #loss = criterion(outputs.float(),targets.float())
+    loss = criterion(outputs.float(), targets.float(),net,T,lambda0,lambda1)
     loss.backward()
     optimizer.step()
     return loss.item() 
@@ -107,8 +107,7 @@ def regLoss(output, target,net,T,lambda0,lambda1):
         if i == len(net)-1:
             loss += (0.5*lambda1*T)*(torch.linalg.matrix_norm(net[i].weight)**2)
         else:
-            if isinstance(net[i],nn.Linear):
-                loss += (0.5*lambda0*T)*(torch.linalg.matrix_norm(net[i].weight)**2)
-            
+            if (isinstance(net[i],nn.Linear) or isinstance(net[i],nn.Conv2d)):
+                loss += (0.5*lambda0*T)*(torch.linalg.norm(net[i].weight.flatten())**2)
     loss += 0.5*torch.sum((output - target)**2)
     return loss

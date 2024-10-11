@@ -110,5 +110,5 @@ class ConvNet:
         modules.append(Norm(np.sqrt(FC_params)))
         modules.append(last_layer)
         sequential = nn.Sequential(*modules)
-        print(f'\nThe network has {self.L} convolutional hidden layer(s) with {self.Nc} kernels of size {self.mask} and {self.act} activation function', sequential)
+        print(f'\nThe network has 1 convolutional hidden layer with {self.Nc} kernels of size {self.mask} and {self.act} activation function', sequential)
         return sequential
