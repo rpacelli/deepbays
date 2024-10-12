@@ -103,26 +103,3 @@ class synthetic_1hl_dataset:
         
         return inputs, targets.unsqueeze(1), test_inputs, test_targets.unsqueeze(1)
     
-class perceptron_dataset: 
-    def __init__(self, N):
-        self.N = N
-        self.model = perceptron(N)
-        # Initialize the model parameters
-        self.initialize_model()
-
-    def initialize_model(self):
-        # Set the model to evaluation mode and initialize with random weights
-        self.model.eval()
-        with torch.no_grad():
-            for param in self.model.parameters():
-                nn.init.normal_(param, mean=0, std=1)
-    
-    def make_data(self, P, Ptest):
-        inputs = torch.randn((P, self.N))
-        test_inputs = torch.randn((Ptest, self.N))
-        
-        with torch.no_grad():
-            targets = self.model(inputs).squeeze()
-            test_targets = self.model(test_inputs).squeeze()
-        
-        return inputs, targets.unsqueeze(1), test_inputs, test_targets.unsqueeze(1)
