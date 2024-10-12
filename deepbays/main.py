@@ -28,12 +28,6 @@ def RKGP(L: int,
 
     Returns:
     - model: The constructed RKGP model that is equivalent to the specified network.
-
-    Raises:
-    - ValueError: If L is not an integer or is less than 1.
-    - ValueError: If width is not an integer.
-    - ValueError: If D is not an integer or is less than 1.
-    - ValueError: If kernel_type is not "best" or "vanilla".
     """
     
     morespecs = ""
