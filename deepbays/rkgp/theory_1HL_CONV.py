@@ -4,7 +4,15 @@ from .. import kernels
 import torch
 
 class CONV_1HL():
-    def __init__(self, Nc, T, mask, stride, l0 = 1., l1 = 1., act = "erf"):
+    def __init__(self, 
+                 Nc     : int,
+                 T      : float, 
+                 mask   : int,
+                 stride : int, 
+                 l0     : float = 1., 
+                 l1     : float = 1., 
+                 act    : str = "erf"
+                 ):
         self.Nc, self.l0, self.l1, self.T, self.mask, self.stride = Nc, l0, l1, T, mask, stride
         self.pool = False
         self.kernel, self.kernelTorch = eval(f"kernels.kernel_{act}"), eval(f"kernels.kernel_{act}_torch")

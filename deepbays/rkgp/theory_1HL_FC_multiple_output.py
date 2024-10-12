@@ -7,17 +7,19 @@ from .. import tasks
 ## DEBUGGED VERSION. PASSED ALL TESTS ON 01/07/2024
 
 class FC_1HL_multiclass():
-    def __init__(self, N1 : int , D : int, T : float, l0 : float = 1.0, l1 : float = 1.0, act : str = "erf", oneHot : bool = False):
-        self.N1 = N1
-        self.l0 = l0
-        self.l1 = l1 
-        self.T = T
+    def __init__(self, 
+                 N1 : int, 
+                 D  : int, 
+                 T  : float, 
+                 l0 : float = 1.0, 
+                 l1 : float = 1.0, 
+                 act : str = "erf", 
+                 oneHot : bool = False
+                 ):
+        self.N1, self.l0, self.l1, self.T, self.D, self.oneHot = N1, l0, l1, T, D, oneHot
         self.kernelTorch = eval(f"kernels.kernel_{act}_torch")
         self.kernel = eval(f"kernels.kernel_{act}")
-        self.D = D
         self.numOfVariables = int(self.D*(self.D+1)/2)
-        self.oneHot = oneHot
-        #self.optQ = None
         
     def effectiveAction(self, *args):
         Q = torch.zeros((self.D, self.D))

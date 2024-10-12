@@ -4,20 +4,20 @@ from .. import kernels
 import torch
 
 class FC_deep():
-    def __init__(self, L, N1, T, priors = [1.0, 1.0], act = "erf"):
-        self.N1 = N1
-        self.l0 = priors[0]
-        self.l1 = priors[1:] 
-        self.T = T
+    def __init__(self, 
+                 L      : int, 
+                 N1     : int, 
+                 T      : float, 
+                 priors : list = [1.0, 1.0], 
+                 act    : str = "erf"):
+        self.N1, self.T, self.L, self.l0, self.l1 = N1, T, L, priors[0],priors[1:] 
         self.kernelTorch = eval(f"kernels.kernel_{act}_torch")
         self.kernel = eval(f"kernels.kernel_{act}")
-        self.L = L
         
     def effectiveAction(self, Q):
         rKL = torch.tensor(self.C, dtype = torch.float64, requires_grad = False)
         for l in range(self.L):
             orderParam = Q[l] / self.l1[l]
-            #rKL = orderParam * computeKmatrixTorch(rKL, self.kernelTorch)
             rKL = orderParam * self.kernelTorch(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
         A = rKL +  self.T * torch.eye(self.P) 
         invA = torch.inverse(A)

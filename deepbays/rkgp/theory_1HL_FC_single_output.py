@@ -6,11 +6,14 @@ import torch
 
 ## DEBUGGED VERSION, PASSED ALL TESTS 01/07/2024
 class FC_1HL():
-    def __init__(self, N1, T, l0 = 1.0, l1 = 1.0, act = "erf", bias = False):
-        self.N1 = N1
-        self.l0 = l0
-        self.l1 = l1 
-        self.T = T
+    def __init__(self, 
+                 N1   : int, 
+                 T    : float, 
+                 l0   : float = 1.0,
+                 l1   : float = 1.0,
+                 act  : str = "erf", 
+                 bias : bool = False):
+        self.N1, self.l0, self.l1, self.T = N1, l0, l1, T
         self.kernel = eval(f"kernels.kernel_{act}")
         if bias: 
             self.kernel = eval(f"kernels.kernel_{act}_bias")
