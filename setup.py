@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-VERSION = '0.0.9' 
+VERSION = '0.1.0' 
 DESCRIPTION = 'Bayesian deep neural networks in the proportional regime as renormalized kernel gaussian processes'
 LONG_DESCRIPTION = 'Compute expected predictor of a Bayesian deep neural networks in the proportional regime in a non-parametric way using the equivalent GP'
 

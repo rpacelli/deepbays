@@ -100,7 +100,7 @@ class ConvNet:
         modules.append(nn.Flatten())
         with torch.no_grad(): 
             dummy_net_sequential = nn.Sequential(*modules)
-            out = dummy_net_sequential(torch.randn(int(np.sqrt(self.N0)),int(np.sqrt(self.N0))).unsqueeze(0))
+            out = dummy_net_sequential(torch.randn(self.inputChannels,int(np.sqrt(self.N0)),int(np.sqrt(self.N0))).unsqueeze(0))
             FC_params = len(out.flatten())  # number of parameters in the last layer   
         # Fully connected layer
         last_layer = nn.Linear(FC_params, 1, bias=self.bias)
