@@ -6,19 +6,24 @@ In addition to RKGPs, the package includes:
 - Different neural network (NN) architectures 
 - An optimizer for training NNs based on discrete Langevin Dynamics
 
-This documentation provides an overview of the main features. 
+This documentation provides an overview of the main features, and links to interactive python notebooks.
 
 NB: This repository contains the code to reproduce the experiments contained in "Local Kernel Renormalization as a mechanism for feature learning in overparameterized Convolutional Neural Networks".
+
 ## Installation
 To install the `deepbays` package, use the following command:
 ```bash
 pip install deepbays
 ```
 ## Theoretical background for understanding RKGPs
-This code refers to a series of articles, linked below, which contains all the theoretical background to understanding RKGPs and their exact link to neural networks. 
+This code refers to a series of articles, linked below, which contain all the theoretical background to understanding RKGPs and their exact link to neural networks. 
+- A statistical mechanics framework for Bayesian deep neural networks beyond the infinite-width limit, [Nature machine intelligence, 2023](https://www.nature.com/articles/s42256-023-00767-6).
+- Predictive Power of a Bayesian Effective Action for Fully Connected One Hidden Layer Neural Networks in the Proportional Limit [Phys. Rev. Lett., 2024](https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.133.027301).
+- Local Kernel Renormalization as a mechanism for feature learning in overparameterized Convolutional Neural Networks. [ArXiv, 2023](https://arxiv.org/abs/2307.11807)
 ## Core Functionality: `RKGP` Function
-The `RKGP` function is the main functionality of `deepbays`. It returns an RKGP model with the specified parameters of the equivalent neural network.
+The `RKGP` function is the main functionality of `deepbays`. It returns an RKGP model with the specified parameters of the equivalent neural network. To see all available combinations of RKGP, see Package Structure. 
 ```python
+#Constructs a Renormalized Kernel Gaussian Process model.
 RKGP(L: int, # Number of hidden layers
 	 width: int, # Size of all the hidden layers.
 	 D: int, # Number of network outputs.
@@ -28,37 +33,22 @@ RKGP(L: int, # Number of hidden layers
 	 model_type: str = "FC", # Type of layers
 	 kernel_type: str = "vanilla" # Compute corrections when possible
 		 ): 
-    """
-    Constructs a Renormalized Kernel Gaussian Process model.
-
-    Parameters:
-    - L (int): Number of hidden layers. The depth of the networ is L+1. Must be 
-				    an integer.
-    - width (int): Size of all the hidden layers. If the model is "FC", this is 
-				    the number of hidden layer units, if the model is "CONV" 
-					this is the number of convolutional channels in the hidden 
-					layer. Must be an integer.
-    - D (int): Number of network outputs. Must be an integer.
-    - T (float, optional): Temperature 
-    - priors (list of float, optional): Gaussian priors for each layer. Must be 
-									    a list of length L.
-                                        Defaults to 1 for all layers.
-    - act (str, optional): Activation function. Defaults to "erf".
-    - model_type (str, optional): Type of model. Choose between:   
-                                  fully-connected "FC", and convolutional "CONV"
-    - kernel_type (str, optional): Kernel type. Defaults to "vanilla". 
-                                   If kernel_type is "best" and the architecture 
-                                   is 1HL FC, first order corrections to the 
-                                   proportional limit will be computed. 
-
-    Returns:
-    - model: The constructed RKGP model with specified parameters.
+# Returns RKGP model with specified parameters.
 ```
-To see all available combinations of RKGP, see Package Structure. 
+Parameters:
+- `L (int)`: Number of hidden layers. The depth of the networ is L+1. Must be an integer.
+- `width (int)`: Size of all the hidden layers. If the model is `FC`, this is the number of hidden layer units, if the model is `CONV` this is the number of convolutional channels in the hidden layer. Must be an integer.
+- `D (int)`: Number of network outputs. Must be an integer.
+- `T (float, optional)`: Temperature 
+- `priors (list of float, optional)`: Gaussian priors for each layer. Must be a list of length L. Defaults to 1. for all layers.
+- `act (str, optional)`: Activation function. Defaults to `erf`.
+- `model_type (str, optional)`: Type of model. Choose between: fully-connected `FC`, and convolutional `CONV`
+- `kernel_type (str, optional)`: Kernel type. Defaults to `vanilla`. If kernel_type is `best` and the architecture is 1HL FC, first order corrections to the proportional limit will be computed. 
+
 ### Interactive Python Notebook
 To help users get started quickly, a series of interactive Jupyter Notebooks are also provided. The notebooks include step-by-step instructions and code cells to run the examples interactively.
-- Intro to RKGP: https://colab.research.google.com/drive/1bMh6-5H8ptmDIfsk6_v2X_30qzK4sPlq?usp=sharing.
-
+- Intro to RKGP. Solving two simple regression and classification problems with RKGP: [Tutorial intro](https://colab.research.google.com/drive/1bMh6-5H8ptmDIfsk6_v2X_30qzK4sPlq?usp=sharing)
+- Training a convolutional shallow network with Langevin dynamics over the MNIST dataset of handwritten digits: [Tutorial CNN Langevin training](https://colab.research.google.com/drive/1YxWXd4hCKG_AfZN6N0LT550n2diNuWm2?usp=sharing)
 ## Package Structure
 The `deepbays` package is organized into the following modules:
 - `rkgp`: Contains the core functionality for defining and training Gaussian Processes. This module is called by the RKGP function. 
@@ -120,7 +110,7 @@ Each dataset class typically includes the following methods:
  data_class = db.tasks.mnist_dataset(N0=784, classes=(0, 1), seed=1234)
  data, labels, test_data, test_labels = data_class.make_data(P=5, Pt=5)
  ```
-#### NN module`
+#### NN module
 The `NN` module provides utilities for Bayesian training of standard scaled neural networks. Two tutorials on how to train the available models with the Bayesian sampler can be found LINK.
 ##### Available Functions
 - `train` A function that trains a neural network using a specified dataset, optimizer, and loss function.
@@ -130,8 +120,7 @@ The `NN` module provides utilities for Bayesian training of standard scaled neur
 ##### Available Classes
 - `FCNet` A fully connected neural network (FCNet), consisting of one or more dense layers.
 - `CONVNet`A convolutional neural network (CONVNet), typically used for image-based tasks, consisting of one convolutional layer followed by a fully connected layer.
-#### Example use of FC network
-
+#### Example fully-connected network
 ```python
 import torch
 import deepbays as db
@@ -155,7 +144,7 @@ x = torch.randn(64, input_dim)
 output = net(x)
 print(output.shape) # torch.Size([64, 1])
 ```
-#### Example use 
+#### Example convolutional network
 ```python
 import torch
 import deepbays as db
