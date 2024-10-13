@@ -41,7 +41,7 @@ Parameters:
 - `D (int)`: Number of network outputs. Must be an integer.
 - `T (float, optional)`: Temperature 
 - `priors (list of float, optional)`: Gaussian priors for each layer. Must be a list of length L. Defaults to 1. for all layers.
-- `act (str, optional)`: Activation function. Defaults to `erf`.
+- `act (str, optional)`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`).
 - `model_type (str, optional)`: Type of model. Choose between: fully-connected `FC`, and convolutional `CONV`
 - `kernel_type (str, optional)`: Kernel type. Defaults to `vanilla`. If kernel_type is `best` and the architecture is 1HL FC, first order corrections to the proportional limit will be computed. 
 ## Interactive Python Notebook
@@ -68,44 +68,44 @@ The `rkgp` module contains the core functionality for defining and training Gaus
 - `CONV_1HL(N1, T, l0, l1, act, mask, stride)`:
 	- Returns: Shallow convolutional model with dense readout
 #### Parameters for 1HL fully-connected networks
--`N1 : int` : Number of units in the hidden layer;
--`T : float` : Temperature;
--`D : int` : Number of outputs;
--`l0 : float = 1.`: Gaussian Prior of first hidden layer;
--`l1 : float = 1.`: Gaussian Prior of second hidden layer
--`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`)
+- `N1 : int` : Number of units in the hidden layer;
+- `T : float` : Temperature;
+- `D : int` : Number of outputs;
+- `l0 : float = 1.`: Gaussian Prior of first hidden layer;
+- `l1 : float = 1.`: Gaussian Prior of second hidden layer
+- `act : str = "erf"`: Activation function. 
 -`bias : bool = False` Bias for all layers
 #### Parameters for deep fully-connected networks
--`N1 : int` : Number of units in the hidden layers;
--`T : float` : Temperature;
--`L : int` : Number of hidden layers;
--`priors : list = [1,...,1]`: Gaussian Priors for each layer. List of length `L`.
--`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`)
+- `N1 : int` : Number of units in the hidden layers;
+- `T : float` : Temperature;
+- `L : int` : Number of hidden layers;
+- `priors : list = [1,...,1]`: Gaussian Priors for each layer. List of length `L`.
+- `act : str = "erf"`: Activation function. 
 #### Parameters for 1HL convolutional networks
--`Nc : int`: Number of channels (for the convolutional model)
--`T : float` : Temperature;
--`l0 : float = 1.`: Gaussian Prior of first hidden layer;
--`l1 : float = 1.`: Gaussian Prior of second hidden layer;
--`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`);
--`mask : int ` Size of convolutional mask (convolutional kernel);
--`stride : int ` Striding of convolution. 
+- `Nc : int`: Number of channels (for the convolutional model)
+- `T : float` : Temperature;
+- `l0 : float = 1.`: Gaussian Prior of first hidden layer;
+- `l1 : float = 1.`: Gaussian Prior of second hidden layer;
+- `act : str = "erf"`: Activation function.
+- `mask : int ` Size of convolutional mask (convolutional kernel);
+- `stride : int ` Striding of convolution. 
 ### `tasks` module
 The `tasks` module provides various datasets for training and testing. The avaliable datasets are listed as follows: 
 - `cifar_dataset`. The CIFAR10 dataset.
-- `mnist_dataset`. The MNIST dataset
+- `mnist_dataset`. The MNIST dataset of handwritten digits.
 - `synthetic_1hl_dataset`. A dataset of random data with labels given by a random 1HL network.
 Each dataset class typically includes the following methods:
 - `__init__(self, N0, classes, seed)`: Initializes the dataset with the specified parameters.
 	- `N0`: Input dimension of the dataset.
 	- classes: Tuple specifying the classes of interest.
-	- seed: Seed for reproducibility
+	- seed: Seed for reproducibility.
 - `make_data(self, P, Pt)`: Generates the data and labels for training and testing. Returns tuple containing training data, training labels, test data, and test labels
 	- `P`: Number of training examples.
 	- `Pt`: Number of test examples.
  Example:
  ```python
  import deepbays as db
- data_class = db.tasks.mnist_dataset(N0=784, classes=(0, 1), seed=1234)
+ data_class = db.tasks.mnist_dataset(N0=784, classes=(0, 1), seed=1234) #select only classes with labels 0 and 1 from MNIST
  data, labels, test_data, test_labels = data_class.make_data(P=5, Pt=5)
  ```
 ### NN module
@@ -116,8 +116,8 @@ The `NN` module provides utilities for Bayesian training of standard scaled neur
 - `test`A function that evaluates the MSE of the trained model on a test dataset.
 - `LangevinOpt` A custom optimizer based on Langevin dynamics to simulate sampling from a posterior Gibbs distribution. This ensures Bayesian training. 
 #### Available Classes
-- `FCNet` A fully connected neural network (FCNet), consisting of one or more dense layers.
-- `CONVNet`A convolutional neural network (CONVNet), typically used for image-based tasks, consisting of one convolutional layer followed by a fully connected layer.
+- `FCNet` A fully connected neural network consisting of one or more dense layers.
+- `ConvNet`A convolutional neural network typically used for image-based tasks, consisting of one convolutional layer followed by a fully connected layer.
 ##### Example fully-connected network
 ```python
 import torch
