@@ -3,7 +3,7 @@ The `deepbays` package provides a comprehensive framework for defining and train
 
 In addition to RKGPs, the package includes:
 - A variety of computer vision tasks (both synthetic and real-world),
-- Different neural network (NN) architectures 
+- Different neural network (NN) architectures with the standard scaling,
 - An optimizer for training NNs based on discrete Langevin Dynamics
 
 This documentation provides an overview of the main features, and links to interactive python notebooks.
@@ -44,8 +44,7 @@ Parameters:
 - `act (str, optional)`: Activation function. Defaults to `erf`.
 - `model_type (str, optional)`: Type of model. Choose between: fully-connected `FC`, and convolutional `CONV`
 - `kernel_type (str, optional)`: Kernel type. Defaults to `vanilla`. If kernel_type is `best` and the architecture is 1HL FC, first order corrections to the proportional limit will be computed. 
-
-### Interactive Python Notebook
+## Interactive Python Notebook
 To help users get started quickly, a series of interactive Jupyter Notebooks are also provided. The notebooks include step-by-step instructions and code cells to run the examples interactively.
 - Intro to RKGP. Solving two simple regression and classification problems with RKGP: [Tutorial intro](https://colab.research.google.com/drive/1bMh6-5H8ptmDIfsk6_v2X_30qzK4sPlq?usp=sharing)
 - Training a convolutional shallow network with Langevin dynamics over the MNIST dataset of handwritten digits: [Tutorial CNN Langevin training](https://colab.research.google.com/drive/1YxWXd4hCKG_AfZN6N0LT550n2diNuWm2?usp=sharing)
@@ -55,33 +54,10 @@ The `deepbays` package is organized into the following modules:
 - `tasks`: Contains datasets for training and testing.
 - `NN`: Contains neural network training and evaluation utilities. Can be used to compare the RKGP performance to that of the equivalent network model.
 - `kernels`: Contains kernel functions used in RKGPs
-## Modules
-#### rkgp module
+### `rkgp` module
 The `rkgp` module contains the core functionality for defining and training Gaussian Processes. You can directly define the RKGPs from this module, or you can use the RKGP function (which has a more standardized call for arguments). 
-##### Parameters for 1HL fully-connected networks
--`N1 : int` : Number of units in the hidden layer;
--`T : float` : Temperature;
--`D : int` : Number of outputs;
--`l0 : float = 1.`: Gaussian Prior of first hidden layer;
--`l1 : float = 1.`: Gaussian Prior of second hidden layer
--`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`)
--`bias : bool = False` Bias for all layers
-##### Parameters for deep fully-connected networks
--`N1 : int` : Number of units in the hidden layers;
--`T : float` : Temperature;
--`L : int` : Number of hidden layers;
--`priors : list = [1,...,1]`: Gaussian Priors for each layer. List of length `L`.
--`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`)
-##### Parameters for 1HL convolutional networks
--`Nc : int`: Number of channels (for the convolutional model)
--`T : float` : Temperature;
--`l0 : float = 1.`: Gaussian Prior of first hidden layer;
--`l1 : float = 1.`: Gaussian Prior of second hidden layer;
--`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`);
--`mask : int ` Size of convolutional mask (convolutional kernel);
--`stride : int ` Striding of convolution. 
-##### Available Functions and Classes
-- `FC_1HL(N1, T, l0, l1, act, bias):
+#### Available Functions and Classes
+- `FC_1HL(N1, T, l0, l1, act, bias)`:
 	- Returns: GP model equivalent to a single-output one-hidden-layer fully-connected network with odd activation function (`erf`,`id`).
 - `FC_1HL_multiclass(N1, D, T, l0, l1, act)`:
 	- Returns: GP model for multiclass classification, equivalent to a fully-connected shallow network with multiple outputs.
@@ -91,7 +67,29 @@ The `rkgp` module contains the core functionality for defining and training Gaus
 	- Returns: GP model equivalent to a single-output one-hidden-layer fully-connected network with nonodd activation function (`relu`).
 - `CONV_1HL(N1, T, l0, l1, act, mask, stride)`:
 	- Returns: Shallow convolutional model with dense readout
-#### tasks module
+#### Parameters for 1HL fully-connected networks
+-`N1 : int` : Number of units in the hidden layer;
+-`T : float` : Temperature;
+-`D : int` : Number of outputs;
+-`l0 : float = 1.`: Gaussian Prior of first hidden layer;
+-`l1 : float = 1.`: Gaussian Prior of second hidden layer
+-`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`)
+-`bias : bool = False` Bias for all layers
+#### Parameters for deep fully-connected networks
+-`N1 : int` : Number of units in the hidden layers;
+-`T : float` : Temperature;
+-`L : int` : Number of hidden layers;
+-`priors : list = [1,...,1]`: Gaussian Priors for each layer. List of length `L`.
+-`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`)
+#### Parameters for 1HL convolutional networks
+-`Nc : int`: Number of channels (for the convolutional model)
+-`T : float` : Temperature;
+-`l0 : float = 1.`: Gaussian Prior of first hidden layer;
+-`l1 : float = 1.`: Gaussian Prior of second hidden layer;
+-`act : str = "erf"`: Activation function. Choose between: Error Function (`erf`), Rectified Linear Unit (`relu`), Identity function (`id`);
+-`mask : int ` Size of convolutional mask (convolutional kernel);
+-`stride : int ` Striding of convolution. 
+### `tasks` module
 The `tasks` module provides various datasets for training and testing. The avaliable datasets are listed as follows: 
 - `cifar_dataset`. The CIFAR10 dataset.
 - `mnist_dataset`. The MNIST dataset
@@ -110,17 +108,17 @@ Each dataset class typically includes the following methods:
  data_class = db.tasks.mnist_dataset(N0=784, classes=(0, 1), seed=1234)
  data, labels, test_data, test_labels = data_class.make_data(P=5, Pt=5)
  ```
-#### NN module
+### NN module
 The `NN` module provides utilities for Bayesian training of standard scaled neural networks. Two tutorials on how to train the available models with the Bayesian sampler can be found LINK.
-##### Available Functions
+#### Available Functions
 - `train` A function that trains a neural network using a specified dataset, optimizer, and loss function.
 - `regLoss` This function computes the loss of the network, incorporating regularization terms rescaled by the temperature (gaussian priors).
 - `test`A function that evaluates the MSE of the trained model on a test dataset.
 - `LangevinOpt` A custom optimizer based on Langevin dynamics to simulate sampling from a posterior Gibbs distribution. This ensures Bayesian training. 
-##### Available Classes
+#### Available Classes
 - `FCNet` A fully connected neural network (FCNet), consisting of one or more dense layers.
 - `CONVNet`A convolutional neural network (CONVNet), typically used for image-based tasks, consisting of one convolutional layer followed by a fully connected layer.
-#### Example fully-connected network
+##### Example fully-connected network
 ```python
 import torch
 import deepbays as db
@@ -144,7 +142,7 @@ x = torch.randn(64, input_dim)
 output = net(x)
 print(output.shape) # torch.Size([64, 1])
 ```
-#### Example convolutional network
+##### Example convolutional network
 ```python
 import torch
 import deepbays as db
