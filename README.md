@@ -54,11 +54,11 @@ RKGP(L: int, # Number of hidden layers
     Returns:
     - model: The constructed RKGP model with specified parameters.
 ```
-To see all available combinations of RKGP, see Package Structure [[#rkgp module]]. 
+To see all available combinations of RKGP, see Package Structure. 
 ### Interactive Python Notebook
-To help users get started quickly, a series of interactive Jupyter Notebooks are also provided. The notebook includes step-by-step instructions and code cells to run the examples interactively.
+To help users get started quickly, a series of interactive Jupyter Notebooks are also provided. The notebooks include step-by-step instructions and code cells to run the examples interactively.
+- Intro to RKGP: https://colab.research.google.com/drive/1bMh6-5H8ptmDIfsk6_v2X_30qzK4sPlq?usp=sharing.
 
-You can find the notebook at the following link.
 ## Package Structure
 The `deepbays` package is organized into the following modules:
 - `rkgp`: Contains the core functionality for defining and training Gaussian Processes. This module is called by the RKGP function. 
@@ -67,7 +67,7 @@ The `deepbays` package is organized into the following modules:
 - `kernels`: Contains kernel functions used in RKGPs
 ## Modules
 #### rkgp module
-The `rkgp` module contains the core functionality for defining and training Gaussian Processes. You can directly define the RKGPs from this module, or you can use the [[#Core Functionality `RKGP` Function]] (which has a more standardized call for arguments). 
+The `rkgp` module contains the core functionality for defining and training Gaussian Processes. You can directly define the RKGPs from this module, or you can use the RKGP function (which has a more standardized call for arguments). 
 ##### Parameters for 1HL fully-connected networks
 -`N1 : int` : Number of units in the hidden layer;
 -`T : float` : Temperature;
