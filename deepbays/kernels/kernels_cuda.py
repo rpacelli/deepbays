@@ -1,10 +1,6 @@
 import cupy as cp
 
-### VERSION OF KERNELS THAT WORK WITH NUMPY
-def computeKmatrix_cuda(C, kernel):
-    diagonal = cp.diag(C)
-    K = kernel(diagonal[:, None], C, diagonal[None, :]) # diagonal[:, None] makes it a column vector, diagonal[None, :] makes it a row vector
-    return K
+### VERSION OF KERNELS THAT WORK WITH CUPY
 
 def kernel_erf_cuda(cxx,cxy,cyy):
     return (2 / cp.pi)*cp.arcsin((2 * cxy) / cp.sqrt((1 + 2 * cxx)*(1 + 2 * cyy)))

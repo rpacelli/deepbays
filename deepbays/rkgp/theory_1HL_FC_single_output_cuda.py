@@ -14,9 +14,9 @@ class FC_1HL_cuda():
                  act  : str = "erf", 
                  bias : bool = False):
         self.N1, self.l0, self.l1, self.T = N1, l0, l1, T
-        self.kernel = eval(f"kernels.kernel_{act}")
+        self.kernel = eval(f"kernels.kernel_{act}_cuda")
         if bias: 
-            self.kernel = eval(f"kernels.kernel_{act}_bias")
+            self.kernel = eval(f"kernels.kernel_{act}_bias_cuda")
 
     def effectiveAction(self, x):
         A = self.T * cp.identity(self.P) + (x/self.l1) * self.diagK
@@ -34,22 +34,25 @@ class FC_1HL_cuda():
         self.optQ = 1
 
     def preprocess(self, Xtrain, Ytrain):
-        self.P, self.N0 = Xtrain.shape
+        self.Xtrain = cp.asarray(Xtrain)
+        self.Ytrain = cp.asarray(Ytrain)
+        self.P, self.N0 = self.Xtrain.shape
         self.corrNorm = 1/(self.N0*self.l0)
-        self.C = cp.dot(Xtrain, Xtrain.T) * self.corrNorm
-        self.Xtrain = Xtrain
-        self.Ytrain = Ytrain
+        self.C = cp.dot(self.Xtrain, self.Xtrain.T) * self.corrNorm        
+        #self.Xtrain = Xtrain
+        #self.Ytrain = Ytrain
         self.CX = self.C.diagonal()
         self.K = kernels.computeKmatrix(self.C, self.kernel)
-        self.eigvalK, eigvecK = cp.linalg.eig(self.K)
+        self.eigvalK, eigvecK = cp.linalg.eigh(self.K)
         self.diagK = cp.diagflat(self.eigvalK)
         self.Udag = eigvecK.T
-        self.yT = cp.matmul(self.Udag, Ytrain.squeeze())
+        self.yT = cp.matmul(self.Udag, self.Ytrain.squeeze())
 
     def computeTestsetKernels(self, Xtest):
         self.Ptest = len(Xtest)
-        self.C0 = cp.dot(Xtest, Xtest.T).diagonal() * self.corrNorm
-        self.C0X = cp.dot(Xtest, self.Xtrain.T) * self.corrNorm
+        self.Xtest = cp.asarray(Xtest)
+        self.C0 = cp.dot(self.Xtest, self.Xtest.T).diagonal() * self.corrNorm
+        self.C0X = cp.dot(self.Xtest, self.Xtrain.T) * self.corrNorm
         self.K0 =  self.kernel(self.C0, self.C0, self.C0) 
         self.K0X = self.kernel(self.C0[:,None], self.C0X, self.CX[None, :])
     
@@ -64,8 +67,9 @@ class FC_1HL_cuda():
         return self.Ypred
     
     def averageLoss(self, Ytest):
+        self.Ytest = cp.asarray(Ytest)
         self.rK0 = self.orderParam * self.K0 
-        bias = Ytest - self.Ypred 
+        bias = self.Ytest - self.Ypred 
         var = self.rK0 - cp.sum(self.K0_invK * self.rK0X, axis=1)
         predLoss = bias**2 + var 
         return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
@@ -120,7 +124,8 @@ class FC_1HL_corrected():
         tildeK = self.orderParam * self.K + (self.T) * cp.eye(self.P)
         invK = cp.linalg.inv(tildeK)
         self.corrTildeK = self.orderParam * self.K + (self.T) * cp.eye(self.P)
-        self.tildeY = cp.matmul(invK, cp.outer(self.Ytrain, self.Ytrain))
+        #self.tildeY = cp.matmul(invK, cp.outer(self.Ytrain, self.Ytrain))
+        self.tildeY = cp.matmul(invK, cp.mutliply(self.Ytrain[:, None], self.Ytrain[:, None]))
         self.corrToK = cp.matmul(cp.matmul(self.tildeY -cp.eye(self.P), invK ), self.K)
         self.corrK = cp.matmul(self.K, cp.eye(self.P)+ self.orderParam * self.corrToK/self.N1)
         self.corrK0X =  cp.matmul(self.K0X, cp.eye(self.P)+ self.orderParam * self.corrToK/self.N1)
