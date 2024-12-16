@@ -47,7 +47,11 @@ class FC_1HL_cuda():
             #self.Xtrain = Xtrain
             #self.Ytrain = Ytrain
             self.CX = self.C.diagonal()
+            #del self.Xtrain
+            #cp.get_default_memory_pool().free_all_blocks()
             self.K = kernels.computeKmatrix(self.C, self.kernel)
+            del self.C 
+            cp.get_default_memory_pool().free_all_blocks()
             self.eigvalK, eigvecK = cp.linalg.eigh(self.K)
             self.diagK = cp.diagflat(self.eigvalK)
             self.Udag = eigvecK.T
@@ -61,6 +65,8 @@ class FC_1HL_cuda():
             self.C0X = cp.dot(self.Xtest, self.Xtrain.T) * self.corrNorm
             self.K0 =  self.kernel(self.C0, self.C0, self.C0) 
             self.K0X = self.kernel(self.C0[:,None], self.C0X, self.CX[None, :])
+            del self.C0, self.C0X
+            cp.get_default_memory_pool().free_all_blocks()
     
     def predict(self, Xtest):
         with self.device:
