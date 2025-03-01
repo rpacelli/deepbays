@@ -34,3 +34,6 @@ def divide2dImage(array, k):
             chunk = array[i:i+k, j:j+k]
             chunks.append(chunk)
     return chunks
+
+def kernel_id_torch(cxx, cxy, cyy):
+    return cxy  
