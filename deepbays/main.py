@@ -37,26 +37,27 @@ def RKGP(L: int,
     assert width > 0 , "Size of hidden layer(s) must be greater than 0."
     argsDict = {"depth of the network (L+1)": L+1, "size of hidden layer(s)": width, "number of outputs": D, "temperature": T, "activation function": act}
 
-    if L == 1: 
-        netName = "1HL"
-        if len(priors) != 0:
-            l0, l1 = priors[0], priors[1]
-        else:
-            l0, l1 = initPriors # if the user choose no priors
-        argsDict["Gaussian priors"] = (l0, l1)
-        assert (isinstance(D, int) and D>=1), "Number of outputs must be integer and greater than 0."
-        if D == 1: 
-            args = [width, T, l0, l1, act]
-            argNames = {"N1":width, "T": T, "l0": l0, "l1": l1, "act": act}
-        else: 
-            morespecs = "_multiclass"
-            args = [width, D, T, l0, l1, act]
-            argNames = {"N1":width, "D": D, "T": T, "l0": l0, "l1": l1, "act": act}
-        if model_type == "CONV": 
-            assert D == 1,  "No model for shallow convolutional networks with multiple outputs."
-            args = [width, T, mask, stride, l0, l1, act ]
-            argNames = {"Nc":width, "T": T, "mask":mask, "stride":stride,"l0": l0, "l1": l1, "act": act}
-    elif L > 1: 
+    # if L == 1: 
+    #     netName = "1HL"
+    #     if len(priors) != 0:
+    #         l0, l1 = priors[0], priors[1]
+    #     else:
+    #         l0, l1 = initPriors # if the user choose no priors
+    #     argsDict["Gaussian priors"] = (l0, l1)
+    #     assert (isinstance(D, int) and D>=1), "Number of outputs must be integer and greater than 0."
+    #     if D == 1: 
+    #         args = [width, T, l0, l1, act]
+    #         argNames = {"N1":width, "T": T, "l0": l0, "l1": l1, "act": act}
+    #     else: 
+    #         morespecs = "_multiclass"
+    #         args = [width, D, T, l0, l1, act]
+    #         argNames = {"N1":width, "D": D, "T": T, "l0": l0, "l1": l1, "act": act}
+    #     if model_type == "CONV": 
+    #         assert D == 1,  "No model for shallow convolutional networks with multiple outputs."
+    #         args = [width, T, mask, stride, l0, l1, act ]
+    #         argNames = {"Nc":width, "T": T, "mask":mask, "stride":stride,"l0": l0, "l1": l1, "act": act}
+    # elif L > 1:
+    if L >= 1: 
         argsDict[ "Gaussian priors"] = priors
         netName = "deep"
         assert D == 1, "No model for deep networks with multiple outputs."
