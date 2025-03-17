@@ -3,7 +3,7 @@ from scipy.optimize import fsolve
 from .. import kernels
 import torch
 
-class FC_deep():
+class FC_deep_nested():
     def __init__(self, 
                  L      : int, 
                  N1     : int, 
