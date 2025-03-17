@@ -17,8 +17,7 @@ class FC_deep_vanilla():
     def effectiveAction(self, Q):
         rKL = torch.tensor(self.C, dtype = torch.float64, requires_grad = False)
         for l in range(self.L):
-            orderParam = 1. / self.l1[l]
-            rKL = orderParam * self.kernelTorch(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+            rKL = ((1. / self.l1[l])) * self.kernelTorch(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
         for l in range(self.L):
             rKL *= Q[l]
         A = rKL +  self.T * torch.eye(self.P) 
@@ -67,16 +66,15 @@ class FC_deep_vanilla():
         rK0L = self.C0 
         rK0XL = self.C0X
         for l in range(self.L):
-            orderParam = 1. / self.l1[l]
             rKXL = rKL.diagonal() 
-            rK0XL = orderParam * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
-            rK0L = orderParam * self.kernel(rK0L, rK0L, rK0L)
-            rKL = orderParam * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+            rK0XL = (1. / self.l1[l]) * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
+            rK0L = (1. / self.l1[l]) * self.kernel(rK0L, rK0L, rK0L)
+            rKL = (1. / self.l1[l]) * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
         for l in range(self.L):
-            rKXL *= self.optQ[l]
-            rK0L *= self.optQ[l]
-            rK0XL *= self.optQ[l]
-            rKL *= self.optQ[l]
+            rKXL = self.optQ[l] * rKXL
+            rK0XL = self.optQ[l] * rK0XL
+            rK0L = self.optQ[l] * rK0L
+            rKL = self.optQ[l] * rKL
         A = rKL + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
         K0_invK = np.matmul(rK0XL, invK)
