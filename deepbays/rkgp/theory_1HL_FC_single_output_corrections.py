@@ -3,24 +3,18 @@ from scipy.optimize import minimize
 from scipy.optimize import fsolve
 from .. import kernels
 import torch
-
-## DEBUGGED VERSION, PASSED ALL TESTS 01/07/2024
-class FC_1HL():
-    def __init__(self, 
-                 N1   : int, 
-                 T    : float, 
-                 l0   : float = 1.0,
-                 l1   : float = 1.0,
-                 act  : str = "erf", 
-                 bias : bool = False):
-        self.N1, self.l0, self.l1, self.T = N1, l0, l1, T
+ 
+class FC_1HL_corrected():
+    def __init__(self, N1, T, l0 = 1.0, l1 = 1.0, act = "erf"):
+        self.N1 = N1
+        self.l0 = l0
+        self.l1 = l1 
+        self.T = T
         self.kernel = eval(f"kernels.kernel_{act}")
-        if bias: 
-            self.kernel = eval(f"kernels.kernel_{act}_bias")
 
     def effectiveAction(self, x):
-        A = self.T * np.identity(self.P) + (x/self.l1) * self.diagK
-        invA = np.linalg.inv(A)
+        tildeK = self.T * np.identity(self.P) + (x/self.l1) * self.diagK
+        invA = np.linalg.inv(tildeK)
         return ( x - np.log(x)
             + (1/self.N1) * np.sum(np.log(self.T + x * self.eigvalK / self.l1))
             + (1/self.N1) * np.dot(self.yT, np.dot(invA, self.yT)) )
@@ -29,7 +23,7 @@ class FC_1HL():
         optQ = minimize(self.effectiveAction, x0, bounds = ((1e-8,np.inf),) , tol=1e-12)
         self.optQ = (optQ.x).item()
         assert self.optQ > 0 , "Unphysical solution found (Q is negative)."
-
+    
     def setIW(self):
         self.optQ = 1
 
@@ -56,15 +50,24 @@ class FC_1HL():
     def predict(self, Xtest):
         self.computeTestsetKernels(Xtest)
         self.orderParam = self.optQ / self.l1
-        A = self.orderParam * self.K + (self.T) * np.eye(self.P)
-        invK = np.linalg.inv(A)
-        self.rK0X = self.orderParam * self.K0X
-        self.K0_invK = np.matmul(self.rK0X, invK)
+        tildeK = self.orderParam * self.K + (self.T) * np.eye(self.P)
+        invK = np.linalg.inv(tildeK)
+        self.corrTildeK = self.orderParam * self.K + (self.T) * np.eye(self.P)
+        self.tildeY = np.matmul(invK, np.outer(self.Ytrain, self.Ytrain))
+        self.corrToK = np.matmul(np.matmul(self.tildeY -np.eye(self.P), invK ), self.K)
+        self.corrK = np.matmul(self.K, np.eye(self.P)+ self.orderParam * self.corrToK/self.N1)
+        self.corrK0X =  np.matmul(self.K0X, np.eye(self.P)+ self.orderParam * self.corrToK/self.N1)
+        self.corrToK0 = np.matmul( invK , self.K0X.T)
+        self.corrK0 = self.K0 + (self.orderParam/self.N1) * (-np.matmul(self.K0X, self.corrToK0)+np.matmul(self.K0X, np.matmul(self.tildeY,self.corrToK0)))
+        self.corrTildeK = self.orderParam * self.corrK + (self.T) * np.eye(self.P)
+        invCorrK = np.linalg.inv(self.corrTildeK)
+        self.rK0X = self.orderParam * self.corrK0X
+        self.K0_invK = np.matmul(self.rK0X, invCorrK)
         self.Ypred =  np.dot(self.K0_invK, self.Ytrain)
         return self.Ypred
     
     def averageLoss(self, Ytest):
-        self.rK0 = self.orderParam * self.K0 
+        self.rK0 = self.orderParam * self.corrK0 
         bias = Ytest - self.Ypred 
         var = self.rK0 - np.sum(self.K0_invK * self.rK0X, axis=1)
         predLoss = bias**2 + var 
