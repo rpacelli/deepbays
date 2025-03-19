@@ -25,14 +25,14 @@ class linear_dataset:
         rng = np.random.RandomState(self.seed)  
         # Generate a random normalized teacher weight vector (w)
         w = rng.randn(self.N0)
-        w /= torch.linalg.norm(w)
+        w /= np.linalg.norm(w)
         # Create training data
-        X = rng.randn((P, self.N0))
-        Y = torch.mv(X, w).reshape(P,1) #equivalent to unsqueeze
+        X = rng.randn(P, self.N0)
+        Y = np.dot(X, w).reshape(P,1) #equivalent to unsqueeze
         # Create test data
-        Xtest = rng.randn((Pt, self.N0))
-        Ytest = torch.mv(Xtest, w).reshape(Pt,1)
-        return X, Y, Xtest, Ytest
+        Xtest = rng.randn(Pt, self.N0)
+        Ytest = np.dot(Xtest, w).reshape(Pt,1)
+        return torch.tensor(X, dtype=torch.float), torch.tensor(Y, dtype=torch.float), torch.tensor( Xtest, dtype=torch.float), torch.tensor(Ytest, dtype=torch.float)
 
 class synthetic_1hl_dataset: 
     def __init__(self, N0, hidden_dim, act, dataSeed = 1234):
