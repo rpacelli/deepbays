@@ -167,3 +167,10 @@ print(output.shape) # Output: torch.Size([64, 1])
 ```
 #### Kernels Module
 The `kernels` module provides various kernel functions used in Gaussian Processes. The kernels are in correspondance to (and depend on) the activation function. Available activation functions are the Error Function `erf` , Rectified Linear Unit `relu` and the identity function `id`. 
+
+### Conda environment
+To avoid compatibility issues, a conda environment is provided for linux machines. You can create the environment from the file ```env.yml``` running the following line: 
+```conda env create -n deep_bayesian --file env.yml```
+then activate it with:
+``` conda activate deep_bayesian ```
+To install conda visit https://conda.io/projects/conda/en/stable/user-guide/install/index.html

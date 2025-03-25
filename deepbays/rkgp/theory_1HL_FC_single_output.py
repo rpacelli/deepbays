@@ -19,8 +19,8 @@ class FC_1HL():
             self.kernel = eval(f"kernels.kernel_{act}_bias")
 
     def effectiveAction(self, x):
-        A = self.T * np.identity(self.P) + (x/self.l1) * self.diagK
-        invA = np.linalg.inv(A)
+        A_diag = (self.T + (x/self.l1) * self.eigvalK)
+        invA = np.diag(1/A_diag)
         return ( x - np.log(x)
             + (1/self.N1) * np.sum(np.log(self.T + x * self.eigvalK / self.l1))
             + (1/self.N1) * np.dot(self.yT, np.dot(invA, self.yT)) )
@@ -41,7 +41,7 @@ class FC_1HL():
         self.Ytrain = Ytrain
         self.CX = self.C.diagonal()
         self.K = kernels.computeKmatrix(self.C, self.kernel)
-        self.eigvalK, eigvecK = np.linalg.eig(self.K)
+        self.eigvalK, eigvecK = np.linalg.eigh(self.K)
         self.diagK = np.diagflat(self.eigvalK)
         self.Udag = eigvecK.T
         self.yT = np.matmul(self.Udag, Ytrain.squeeze())

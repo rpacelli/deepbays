@@ -1,5 +1,5 @@
-from .theory_1HL_FC_single_output import FC_1HL, FC_1HL_corrected
-from .theory_1HL_FC_single_output_correction import FC_1HL_corrected
+from .theory_1HL_FC_single_output import FC_1HL
+from .theory_1HL_FC_single_output_corrections import FC_1HL_corrected
 from .theory_1HL_FC_single_output_nonodd import FC_1HL_nonodd
 #from .theory_1HL_FC_single_output_cuda import FC_1HL_cuda
 from .theory_1HL_FC_multiple_output import FC_1HL_multiclass
