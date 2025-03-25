@@ -6,6 +6,8 @@ from .kernels import mean_relu
 from .kernels import computeKmatrix
 from .kernels_torch import divide2dImage
 from .kernels_torch import kernel_erf_torch
+from .kernels_torch import kernel_erf_derivative_xx_torch
+from .kernels_torch import kernel_erf_derivative_xy_torch
 from .kernels_torch import kernel_id_torch
 from .kernels_torch import kernel_relu_torch
 from .kernels_torch import computeKmatrixTorch
