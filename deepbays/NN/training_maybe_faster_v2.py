@@ -10,7 +10,13 @@ from torch.optim import Optimizer
 class LangevinOpt(optim.Optimizer):
     def __init__(self, model: nn.Module, lr, temperature, priors):
         defaults = {'lr': lr, 'temperature': temperature}
-        super().__init__(model.parameters(), defaults)
+        param_groups = []
+        for layer in model.children():
+            if isinstance(layer, (nn.Linear)):
+                param_groups.append({'params': layer.parameters()})
+
+        super().__init__(param_groups, defaults)
+
         for group, lambda_j in zip(self.param_groups, priors):
             group['lambda'] = lambda_j
             group['noise_std'] = (2 * group['lr'] * group['temperature']) ** 0.5
