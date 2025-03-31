@@ -46,8 +46,7 @@ def computeNormsAndOverlaps(Snet,Tnet):
     return Snorm, Tnorm, overlap
 
 def train(net, data, labels, criterion, optimizer):
-    net.train()
-    optimizer.zero_grad(set_to_none=True)
+    optimizer.zero_grad()
     loss = criterion(net(data), labels)
     loss.backward()
     optimizer.step()
