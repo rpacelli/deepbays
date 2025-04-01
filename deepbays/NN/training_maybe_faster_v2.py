@@ -21,12 +21,16 @@ class LangevinOpt(optim.Optimizer):
             group['lambda'] = lambda_j
             group['noise_std'] = (2 * group['lr'] * group['temperature']) ** 0.5
 
+        assert len(priors) == len(self.param_groups), "Lenght mismatch"
+
     @torch.no_grad()
     def step(self, closure=None):
         for group in self.param_groups:
             for param in group['params']:
                 if param.grad is not None:
-                    param.add_( -group['lr'] * (param.grad + group['temperature'] * group['lambda'] * param) + torch.randn_like(param) * group['noise_std'] )
+                    grad = param.grad.detach()
+                    noise = torch.randn_like(param, memory_format=torch.preserve_format) * group['noise_std']
+                    param.add_(-group['lr'] * (grad + group['temperature'] * group['lambda'] * param) + noise)
 
 
 
@@ -48,7 +52,7 @@ def computeNormsAndOverlaps(Snet,Tnet):
 def train(net, data, labels, criterion, optimizer):
     optimizer.zero_grad()
     loss = criterion(net(data), labels)
-    loss.backward()
+    loss.backward(retain_graph=False)
     optimizer.step()
 
 def regLoss(output, target):
