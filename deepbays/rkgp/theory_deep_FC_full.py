@@ -13,11 +13,12 @@ class FC_deep_full():
         self.N1, self.T, self.L, self.l0, self.l1 = N1, T, L, priors[0],priors[1:] 
         self.kernelTorch = eval(f"kernels.kernel_{act}_torch")
         self.kernelTorch_derivative_xx = eval(f"kernels.kernel_{act}_derivative_xx_torch")
+        self.kernelTorch_derivative_yy = eval(f"kernels.kernel_{act}_derivative_yy_torch")
         self.kernelTorch_derivative_xy = eval(f"kernels.kernel_{act}_derivative_xy_torch")
         self.kernel = eval(f"kernels.kernel_{act}")
         
     def effectiveAction(self, Q):
-        rKL = (1/self.l1[1]) * (  Q[1]*self.K_det + Q[1]*Q[0]*self.K_wis )
+        rKL = Q[1]*self.K_det + Q[1]*Q[0]*self.K_wis 
         A = rKL +  self.T * torch.eye(self.P) 
         invA = torch.inverse(A)
         return ( torch.sum(Q - torch.log(Q))
@@ -56,8 +57,8 @@ class FC_deep_full():
         self.K_NNGP_2 = (1. / self.l1[1]) * self.kernelTorch( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
 
         self.F_xx = self.kernelTorch_derivative_xx( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
-        self.F_yy = self.F_xx.T
-        self.F_xy = self.kernelTorch_derivative_xy(self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
+        self.F_yy = self.kernelTorch_derivative_yy( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
+        self.F_xy = self.kernelTorch_derivative_xy( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
 
         self.K_det = self.K_NNGP_2 - (1. / self.l1[1]) * ( self.F_xx * self.K_NNGP_1.diag().unsqueeze(1) + self.F_yy * self.K_NNGP_1.diag().unsqueeze(0) + self.F_xy * self.K_NNGP_1  )
         self.K_wis = (1. / self.l1[1]) * ( self.F_xx * self.K_NNGP_1.diag().unsqueeze(1) + self.F_yy * self.K_NNGP_1.diag().unsqueeze(0) + self.F_xy * self.K_NNGP_1  )
@@ -78,29 +79,30 @@ class FC_deep_full():
         self.K_NNGP_1_0X = (1. / self.l1[0]) * self.kernelTorch( self.C0[:,None], self.C0X, self.C.diagonal()[None,:] )
         self.K_NNGP_1_0  = (1. / self.l1[0]) * self.kernelTorch( self.C0, self.C0, self.C0 )
 
-        self.K_NNGP_2_0X = (1. / self.l1[0]) * self.kernelTorch( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
-        self.K_NNGP_2_0  = (1. / self.l1[0]) * self.kernelTorch( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
+        self.K_NNGP_2_0X = (1. / self.l1[1]) * self.kernelTorch( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
+        self.K_NNGP_2_0  = (1. / self.l1[1]) * self.kernelTorch( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
 
         self.F_xx_0X = self.kernelTorch_derivative_xx( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
-        self.F_yy_0X = self.kernelTorch_derivative_xx( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1_0X.T, self.K_NNGP_1_0[None,:] ).T
+        self.F_yy_0X = self.kernelTorch_derivative_yy( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
         self.F_xy_0X = self.kernelTorch_derivative_xy( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
 
         self.F_xx_0 = self.kernelTorch_derivative_xx( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
-        self.F_yy_0 = self.F_xx_0
+        self.F_yy_0 = self.kernelTorch_derivative_yy( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
         self.F_xy_0 = self.kernelTorch_derivative_xy( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
 
-        self.K_det_0X = self.K_NNGP_2_0X - (1. / self.l1[1]) * ( torch.einsum("ij,i->ij", self.F_xx_0X, self.K_NNGP_1_0) + torch.einsum("ij,jj->ij", self.F_yy_0X, self.K_NNGP_1) + self.F_xy_0X * self.K_NNGP_1_0X  )
 
-        self.K_wis_0X = (1. / self.l1[1]) * (1. / self.l1[1]) * ( torch.einsum("ij,i->ij", self.F_xx_0X, self.K_NNGP_1_0) + torch.einsum("ij,jj->ij", self.F_yy_0X, self.K_NNGP_1) + self.F_xy_0X * self.K_NNGP_1_0X  )
+        self.K_det_0X = self.K_NNGP_2_0X - (1. / self.l1[1]) * ( self.F_xx_0X * self.K_NNGP_1_0.unsqueeze(1) + self.F_yy_0X * self.K_NNGP_1.diag().unsqueeze(0) + self.F_xy_0X * self.K_NNGP_1_0X )
+
+
+        self.K_wis_0X = (1. / self.l1[1]) * ( self.F_xx_0X * self.K_NNGP_1_0.unsqueeze(1) + self.F_yy_0X * self.K_NNGP_1.diag().unsqueeze(0) + self.F_xy_0X * self.K_NNGP_1_0X )
 
         self.K_det_0 = self.K_NNGP_2_0 - (1. / self.l1[1]) * ( self.F_xx_0 * self.K_NNGP_1_0 + self.F_yy_0 * self.K_NNGP_1_0 + self.F_xy_0 * self.K_NNGP_1_0  )
 
         self.K_wis_0 = (1. / self.l1[1]) * ( self.F_xx_0 * self.K_NNGP_1_0 + self.F_yy_0 * self.K_NNGP_1_0 + self.F_xy_0 * self.K_NNGP_1_0  )
-        print(self.K_wis_0.shape)
 
-        rKL = (1/self.l1[1]) * (  self.optQ[1]*self.K_det + self.optQ[1]*self.optQ[0]*self.K_wis )
-        rK0XL = (1/self.l1[1]) * (  self.optQ[1]*self.K_det_0X + self.optQ[1]*self.optQ[0]*self.K_wis_0X )
-        rK0L = (1/self.l1[1]) * (  self.optQ[1]*self.K_det_0 + self.optQ[1]*self.optQ[0]*self.K_wis_0 )
+        rKL   = self.optQ[1]*self.K_det    + self.optQ[1]*self.optQ[0]*self.K_wis 
+        rK0XL = self.optQ[1]*self.K_det_0X + self.optQ[1]*self.optQ[0]*self.K_wis_0X 
+        rK0L  = self.optQ[1]*self.K_det_0  + self.optQ[1]*self.optQ[0]*self.K_wis_0 
 
         A = rKL + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
