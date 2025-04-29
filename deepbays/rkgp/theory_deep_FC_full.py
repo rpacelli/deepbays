@@ -10,21 +10,55 @@ class FC_deep_full():
                  T      : float, 
                  priors : list = [1.0, 1.0], 
                  act    : str = "erf"):
-        self.N1, self.T, self.L, self.l0, self.l1 = N1, T, L, priors[0],priors[1:] 
+        self.N1, self.T, self.L = N1, T, L
+        self.l1 = np.array(priors)
         self.kernelTorch = eval(f"kernels.kernel_{act}_torch")
-        self.kernelTorch_derivative_xx = eval(f"kernels.kernel_{act}_derivative_xx_torch")
-        self.kernelTorch_derivative_yy = eval(f"kernels.kernel_{act}_derivative_yy_torch")
-        self.kernelTorch_derivative_xy = eval(f"kernels.kernel_{act}_derivative_xy_torch")
         self.kernel = eval(f"kernels.kernel_{act}")
         
     def effectiveAction(self, Q):
-        rKL = Q[1]*self.K_det + Q[1]*Q[0]*self.K_wis 
+        C = torch.tensor(self.C, dtype = torch.float64, requires_grad=True)
+        orderParam = Q / self.l1
+        #rKL = torch.zeros(self.P, self.P, dtype = torch.float64, requires_grad=True)
+        self.kR = eval(f"fR_{self.L}")
+        rKL = self.kR(C.diagonal()[:,None], C, C.diagonal()[None,:], *Q)
+            #orderParam = Q[l] / self.l1[l]
         A = rKL +  self.T * torch.eye(self.P) 
         invA = torch.inverse(A)
         return ( torch.sum(Q - torch.log(Q))
                 + (1/self.N1) * torch.matmul(self.y, torch.matmul(invA, self.y)) 
                 + (1/self.N1) * torch.logdet(A)
                  )
+    
+    def computeKernelGrad(self, cxx,cxy,cyy, *args):
+        cxx = torch.tensor(cxx, dtype = torch.float64, requires_grad = True)
+        cxy = torch.tensor(cxy, dtype = torch.float64, requires_grad = True)
+        cyy = torch.tensor(cyy, dtype = torch.float64, requires_grad = True)
+        z = self.fR_l(cxx,cxy,cyy, *args)
+        grad = torch.autograd.grad(outputs=z, inputs=(cxx,cxy,cyy),
+                                    grad_outputs=torch.ones_like(z),
+                                    create_graph=True)
+        #f = self.fR(cxx, cxy, cyy)
+        #f.backward()
+        return grad
+
+    def fR_1(self,cxx,cxy,cyy,Q1): 
+        return Q1 * self.kernelTorch(cxx, cxy, cyy)
+    
+    def fR_2(self, cxx,cxy,cyy,Q1,Q2): 
+        k_xx = self.kernelTorch(cxx, cxx, cxx)
+        k_yy = self.kernelTorch(cyy, cyy, cyy)
+        k_xy = self.kernelTorch(cxx, cxy, cyy)
+        self.fR_l = self.fR_1
+        d_mm, d_mn, d_nn = self.computeKernelGrad(k_xx, k_xy, k_yy)
+        return self.fR_l(k_xx, k_xy, k_yy, Q1) + (Q2-1)* (d_mm* k_xx + d_nn* k_yy + d_mn* k_xy )
+
+    def fR_3(self, cxx,cxy,cyy, Q1,Q2,Q3): 
+        k_xx = self.kernelTorch(cxx, cxx, cxx)
+        k_yy = self.kernelTorch(cyy, cyy, cyy)
+        k_xy = self.kernelTorch(cxx, cxy, cyy)
+        self.fR_l = self.fR_2
+        d_mm, d_mn, d_nn = self.computeKernelGrad(k_xx, k_xy, k_yy)
+        return self.fR_l(k_xx, k_xy, k_yy, Q1, Q2) + (Q3-1) * (d_mm* k_xx + d_nn* k_yy + d_mn* k_xy )
     
     def computeActionGrad(self, Q):
         Q = torch.tensor(Q, dtype = torch.float64, requires_grad = True)
@@ -48,21 +82,9 @@ class FC_deep_full():
         self.X = X
         self.Y = Y
         self.P, self.N0 = X.shape
-        self.corrNorm = 1/(self.N0 * self.l0)
-
+        self.corrNorm = 1/(self.N0 * self.l1[0])
         self.C = np.dot(X, X.T) * self.corrNorm
-        self.C = torch.tensor(self.C, dtype = torch.float64, requires_grad = False)
-
-        self.K_NNGP_1 = (1. / self.l1[0]) * self.kernelTorch( self.C.diagonal()[:,None], self.C, self.C.diagonal()[None,:] )
-        self.K_NNGP_2 = (1. / self.l1[1]) * self.kernelTorch( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
-
-        self.F_xx = self.kernelTorch_derivative_xx( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
-        self.F_yy = self.kernelTorch_derivative_yy( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
-        self.F_xy = self.kernelTorch_derivative_xy( self.K_NNGP_1.diagonal()[:,None], self.K_NNGP_1, self.K_NNGP_1.diagonal()[None,:] )
-
-        self.K_det = self.K_NNGP_2 - (1. / self.l1[1]) * ( self.F_xx * self.K_NNGP_1.diag().unsqueeze(1) + self.F_yy * self.K_NNGP_1.diag().unsqueeze(0) + self.F_xy * self.K_NNGP_1  )
-        self.K_wis = (1. / self.l1[1]) * ( self.F_xx * self.K_NNGP_1.diag().unsqueeze(1) + self.F_yy * self.K_NNGP_1.diag().unsqueeze(0) + self.F_xy * self.K_NNGP_1  )
-
+        self.CX = self.C.diagonal()
         self.y = Y.squeeze().to(torch.float64)
         self.y.requires_grad = False
 
@@ -73,41 +95,18 @@ class FC_deep_full():
     
     def predict(self, Xtest):
         self.computeTestsetKernels(self.X, Xtest)
-        self.C0X = torch.tensor(self.C0X, dtype = torch.float64, requires_grad = False)
-        self.C0 = torch.tensor(self.C0, dtype = torch.float64, requires_grad = False)
-
-        self.K_NNGP_1_0X = (1. / self.l1[0]) * self.kernelTorch( self.C0[:,None], self.C0X, self.C.diagonal()[None,:] )
-        self.K_NNGP_1_0  = (1. / self.l1[0]) * self.kernelTorch( self.C0, self.C0, self.C0 )
-
-        self.K_NNGP_2_0X = (1. / self.l1[1]) * self.kernelTorch( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
-        self.K_NNGP_2_0  = (1. / self.l1[1]) * self.kernelTorch( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
-
-        self.F_xx_0X = self.kernelTorch_derivative_xx( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
-        self.F_yy_0X = self.kernelTorch_derivative_yy( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
-        self.F_xy_0X = self.kernelTorch_derivative_xy( self.K_NNGP_1_0[:,None], self.K_NNGP_1_0X, self.K_NNGP_1.diagonal()[None,:] )
-
-        self.F_xx_0 = self.kernelTorch_derivative_xx( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
-        self.F_yy_0 = self.kernelTorch_derivative_yy( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
-        self.F_xy_0 = self.kernelTorch_derivative_xy( self.K_NNGP_1_0, self.K_NNGP_1_0, self.K_NNGP_1_0 )
-
-
-        self.K_det_0X = self.K_NNGP_2_0X - (1. / self.l1[1]) * ( self.F_xx_0X * self.K_NNGP_1_0.unsqueeze(1) + self.F_yy_0X * self.K_NNGP_1.diag().unsqueeze(0) + self.F_xy_0X * self.K_NNGP_1_0X )
-
-
-        self.K_wis_0X = (1. / self.l1[1]) * ( self.F_xx_0X * self.K_NNGP_1_0.unsqueeze(1) + self.F_yy_0X * self.K_NNGP_1.diag().unsqueeze(0) + self.F_xy_0X * self.K_NNGP_1_0X )
-
-        self.K_det_0 = self.K_NNGP_2_0 - (1. / self.l1[1]) * ( self.F_xx_0 * self.K_NNGP_1_0 + self.F_yy_0 * self.K_NNGP_1_0 + self.F_xy_0 * self.K_NNGP_1_0  )
-
-        self.K_wis_0 = (1. / self.l1[1]) * ( self.F_xx_0 * self.K_NNGP_1_0 + self.F_yy_0 * self.K_NNGP_1_0 + self.F_xy_0 * self.K_NNGP_1_0  )
-
-        rKL   = self.optQ[1]*self.K_det    + self.optQ[1]*self.optQ[0]*self.K_wis 
-        rK0XL = self.optQ[1]*self.K_det_0X + self.optQ[1]*self.optQ[0]*self.K_wis_0X 
-        rK0L  = self.optQ[1]*self.K_det_0  + self.optQ[1]*self.optQ[0]*self.K_wis_0 
-
+        rKL = self.C
+        rK0L = self.C0 
+        rK0XL = self.C0X
+        for l in range(self.L):
+            orderParam = self.optQ[l] / self.l1[l]
+            rKXL = rKL.diagonal() 
+            rK0XL = orderParam * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
+            rK0L = orderParam * self.kernel(rK0L, rK0L, rK0L)
+            rKL = orderParam * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
         A = rKL + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
         K0_invK = np.matmul(rK0XL, invK)
-        self.rKL = rKL
         self.rK0L = rK0L
         self.K0_invK = K0_invK
         self.rK0XL = rK0XL
@@ -116,7 +115,6 @@ class FC_deep_full():
     
     def averageLoss(self, Ytest):
         bias = Ytest - self.Ypred  
-        var = self.rK0L - torch.sum(self.K0_invK * self.rK0XL, axis=1)
+        var = self.rK0L - np.sum(self.K0_invK * self.rK0XL, axis=1)
         predLoss = bias**2 + var
         return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
-    

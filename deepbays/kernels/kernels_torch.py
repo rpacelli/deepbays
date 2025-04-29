@@ -45,4 +45,4 @@ def divide2dImage(array, k):
     return chunks
 
 def kernel_id_torch(cxx, cxy, cyy):
-    return cxy  
+    return cxy + 0*cxx + 0*cyy #it is necessary to multiply by 0 to compute derivatives wrt cxx cyy. 
