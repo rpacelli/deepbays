@@ -23,14 +23,11 @@ class FC_deep_full():
         
     def effectiveAction(self, Q):
         C = torch.tensor(self.C, dtype = torch.float64, requires_grad=False)
-        orderParam = Q / self.l1
         rKL = torch.zeros(self.P, self.P, dtype = torch.float64, requires_grad=False)
         self.kR = eval(f"self.fR_{self.L}")
         for mu in range(self.P):
             for nu in range(self.P): 
                 rKL[mu,nu] = self.kR(C[mu,mu], C[mu,nu], C[nu,nu], *Q)
-        #rKL = self.kR(C.diagonal()[:,None], C, C.diagonal()[None,:], *Q)
-            #orderParam = Q[l] / self.l1[l]
         A = rKL +  self.T * torch.eye(self.P) 
         invA = torch.inverse(A)
         return ( torch.sum(Q - torch.log(Q))
@@ -43,7 +40,6 @@ class FC_deep_full():
         cxy = cxy.clone().detach().requires_grad_(True)
         cyy = cyy.clone().detach().requires_grad_(True)
         z = self.fR_l(cxx,cxy,cyy, *args)
-        #z = fR(cxx,cxy,cyy, *args)
         grad = torch.autograd.grad(outputs=z, inputs=(cxx,cxy,cyy),
                                     grad_outputs=torch.ones_like(z),
                                     create_graph=True, allow_unused=True)
@@ -57,8 +53,6 @@ class FC_deep_full():
         k_yy = self.kernelTorch(cyy, cyy, cyy)/self.l1[0]
         k_xy = self.kernelTorch(cxx, cxy, cyy)/self.l1[0]
         self.fR_l = self.fR_1
-        #d_mm, d_mn, d_nn = self.computeKernelGrad(k_xx/self.l1[0], k_xy/self.l1[0], k_yy/self.l1[0], Q1)
-        #return (self.fR_l(k_xx/self.l1[0], k_xy/self.l1[0], k_yy/self.l1[0], Q1) + (Q2-1)* (d_mm* k_xx/self.l1[0] + d_nn* k_yy/self.l1[0] + d_mn* k_xy/self.l1[0] ))*self.l1[0] /self.l1[1]
         d_mm, d_mn, d_nn = self.computeKernelGrad(k_xx, k_xy, k_yy, Q1)
         return (self.fR_l(k_xx, k_xy, k_yy, Q1) + (Q2-1)* (d_mm* k_xx + d_nn* k_yy + d_mn* k_xy )) /self.l1[1]
 
@@ -92,12 +86,10 @@ class FC_deep_full():
         self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-8)
         isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) 
         self.converged = isClose.all()
-        #print("\nis exact solution close to zero?", isClose)   
-        #print(f"{self.L} hidden layer optQ is {self.optQ}")
 
     def setIW(self):
         self.kR = eval(f"self.fR_{self.L}")
-        self.optQ = np.ones(self.L)
+        self.optQ = torch.tensor(np.ones(self.L)) 
 
     def preprocess(self, X, Y):
         self.X = X
@@ -105,16 +97,17 @@ class FC_deep_full():
         self.P, self.N0 = X.shape
         self.corrNorm = 1/(self.N0 * self.l0)
         self.C = np.dot(X, X.T) * self.corrNorm
+        self.CX = self.C.diagonal()
         self.y = Y.squeeze().to(torch.float64)
         self.y.requires_grad = False
 
-    def computeTestsetKernels(self, X, Xtest):
+    def computeTestsetKernels(self, Xtest):
         self.Ptest = len(Xtest)
         self.C0 = np.dot(Xtest, Xtest.T).diagonal() * self.corrNorm
-        self.C0X = np.dot(Xtest, X.T) * self.corrNorm
+        self.C0X = np.dot(Xtest, self.X.T) * self.corrNorm
     
     def predict(self, Xtest):
-        self.computeTestsetKernels(self.X, Xtest)
+        self.computeTestsetKernels(Xtest)
         C = torch.tensor(self.C, dtype = torch.float64, requires_grad=False)
         C0 = torch.tensor(self.C0, dtype = torch.float64, requires_grad=False)
         C0X = torch.tensor(self.C0X, dtype = torch.float64, requires_grad=False)
