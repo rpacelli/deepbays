@@ -42,9 +42,6 @@ class FC_deep_full():
         cxx = cxx.clone().detach().requires_grad_(True)
         cxy = cxy.clone().detach().requires_grad_(True)
         cyy = cyy.clone().detach().requires_grad_(True)
-        #cxx = torch.tensor(cxx, dtype = torch.float64, requires_grad = True)
-        #cxy = torch.tensor(cxy, dtype = torch.float64, requires_grad = True)
-        #cyy = torch.tensor(cyy, dtype = torch.float64, requires_grad = True)
         z = self.fR_l(cxx,cxy,cyy, *args)
         #z = fR(cxx,cxy,cyy, *args)
         grad = torch.autograd.grad(outputs=z, inputs=(cxx,cxy,cyy),
@@ -108,7 +105,6 @@ class FC_deep_full():
         self.P, self.N0 = X.shape
         self.corrNorm = 1/(self.N0 * self.l0)
         self.C = np.dot(X, X.T) * self.corrNorm
-        self.CX = self.C.diagonal()
         self.y = Y.squeeze().to(torch.float64)
         self.y.requires_grad = False
 
@@ -133,12 +129,6 @@ class FC_deep_full():
         for mu in range(self.Ptest):
             for nu in range(self.P): 
                 rK0XL[mu,nu] = self.kR(C0[mu], C0X[mu,nu], C[nu,nu], *self.optQ)
-        #for l in range(self.L):
-        #    orderParam = self.optQ[l] / self.l1[l]
-        #    rKXL = rKL.diagonal() 
-        #    rK0XL = orderParam * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
-        #    rK0L = orderParam * self.kernel(rK0L, rK0L, rK0L)
-        #    rKL = orderParam * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
         A = rKL + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
         K0_invK = np.matmul(rK0XL, invK)
