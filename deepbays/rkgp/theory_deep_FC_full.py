@@ -99,6 +99,7 @@ class FC_deep_full():
         #print(f"{self.L} hidden layer optQ is {self.optQ}")
 
     def setIW(self):
+        self.kR = eval(f"self.fR_{self.L}")
         self.optQ = np.ones(self.L)
 
     def preprocess(self, X, Y):
