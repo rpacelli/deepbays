@@ -118,9 +118,9 @@ class FC_deep_full():
         C = torch.tensor(self.C, dtype = torch.float64, requires_grad=False)
         C0 = torch.tensor(self.C0, dtype = torch.float64, requires_grad=False)
         C0X = torch.tensor(self.C0X, dtype = torch.float64, requires_grad=False)
-        rKL = self.C
-        rK0L = self.C0 
-        rK0XL = self.C0X
+        rKL = np.zeros(C.shape)
+        rK0L = np.zeros(C0.shape) 
+        rK0XL = np.zeros(C0X.shape)
         for mu in range(self.P):
             for nu in range(self.P): 
                 rKL[mu,nu] = self.kR(C[mu,mu], C[mu,nu], C[nu,nu], *self.optQ)
