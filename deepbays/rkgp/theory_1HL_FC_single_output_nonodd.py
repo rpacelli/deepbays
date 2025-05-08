@@ -4,8 +4,7 @@ from scipy.optimize import fsolve
 from .. import kernels
 import torch
 
-## DEBUGGED VERSION, PASSED ALL TESTS 01/07/2024
-class FC_1HL():
+class FC_1HL_nonodd():
     def __init__(self, 
                  N1   : int, 
                  T    : float, 
