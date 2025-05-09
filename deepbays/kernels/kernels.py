@@ -77,7 +77,7 @@ def kernel_relu_bias(cxx, cxy, cyy):
     return np.sqrt(cxx * cyy) * kappa 
 
 def mean_relu(c):
-    return np.sqrt(c/2*np.pi)
+    return np.sqrt(c/(2*np.pi))
 
 def kernel_id(cxx, cxy, cyy):
     return cxy    

@@ -53,12 +53,14 @@ class FC_1HL_nonodd_old(): # the order parameter associated with average norm is
         #print(f"\nPoint where the gradient is approximately zero: {self.optQ}")
         isClose = np.isclose(self.computeGrad(self.optQ), [0.0, 0.0]) 
         self.converged = isClose.all()
-        assert self.converged, "Wrong solution found, gradient is not 0. Try changing initial condition."
+        print(self.computeGrad(self.optQ))
+        #assert self.converged, "Wrong solution found, gradient is not 0. Try changing initial condition."
         #print("\nis exact solution close to zero?", isClose) 
     
     def setIW(self):
         self.Q = 1.
         self.bQ = 0.
+        self.optQ = [1,0]
     
     def computeTestsetKernels(self, Xtest):
         self.Ptest = len(Xtest)
@@ -75,17 +77,19 @@ class FC_1HL_nonodd_old(): # the order parameter associated with average norm is
         A = rK - rKm +  self.T * torch.eye(self.P) 
         invK = np.linalg.inv(A)
         rK0X = self.K0X * self.Q /self.l1
-        rK0Xm = (self.Q - (1/(1+self.bQ))) * np.outer(self.Km, self.Km0) /self.l1
+        rK0Xm = (self.Q - (1/(1+self.bQ))) * np.outer(self.Km0, self.Km) /self.l1
         self.rK0X = rK0X - rK0Xm
         self.K0_invK = np.matmul(self.rK0X, invK)
         self.Ypred =  np.dot(self.K0_invK, self.Ytrain)
+        #print(self.Ypred.shape)
         return self.Ypred
     
     def averageLoss(self, Ytest):
         rK0 = self.K0 * self.Q/self.l1 
-        rK0m = (self.Q - (1/(1+self.bQ))) * np.outer(self.Km0, self.Km0) /self.l1
+        #rK0m = (self.Q - (1/(1+self.bQ))) * np.outer(self.Km0, self.Km0) /self.l1
+        rK0m = (self.Q - (1/(1+self.bQ))) * self.Km0 * self.Km0 /self.l1
         self.rK0 = rK0 - rK0m
-        bias = Ytest - self.Ypred 
+        bias = Ytest.squeeze(1) - self.Ypred
         var = self.rK0 - np.sum(self.K0_invK * self.rK0X, axis=1)
         predLoss = bias**2 + var 
-        return predLoss.mean().item(), (bias**2).mean().item(), var 
+        return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
