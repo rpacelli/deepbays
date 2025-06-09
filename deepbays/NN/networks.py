@@ -42,9 +42,11 @@ class FCNet:
                  N1 : int, #number of hidden layer units
                  L : int, #number of hidden layers. depth = L+1
                  bias : bool = False, #if True, add bias for each layer
-                 act : str = "erf" #activation function
+                 act : str = "erf", #activation function
+                 gamma : float = 1.0 # feature learning parameter, for MF use sqrt(N1) and for SP use 1.0
+                                     # Note: Biases are not affected by gamma here. Recheck if this is desired (no biases in Yang'22 or most other MF papers). 
                  ):
-        self.N0, self.N1, self.L, self.act, self.bias = N0, N1, L, act, bias 
+        self.N0, self.N1, self.L, self.act, self.bias, self.gamma = N0, N1, L, act, bias, gamma
 
     def Sequential(self):
         if self.act == "relu":
@@ -71,14 +73,14 @@ class FCNet:
                 init.normal_(layer.bias,std = 1)
             modules.append(layer)
         modules.append(act)
-        modules.append(Norm(np.sqrt(self.N1)))
+        modules.append(Norm(np.sqrt(self.N1 * self.gamma)))
         last_layer = nn.Linear(self.N1, 1, bias=self.bias)  
         init.normal_(last_layer.weight, std = 1) 
         if self.bias:
                 init.normal_(last_layer.bias,std = 1)
         modules.append(last_layer)
         sequential = nn.Sequential(*modules)
-        print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function', sequential)
+        print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function and feature learning param gamma {self.gamma} \n', sequential)
         return sequential
     
 class ConvNet:
