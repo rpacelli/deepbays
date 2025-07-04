@@ -33,6 +33,26 @@ class Norm(torch.nn.Module):
     def forward(self, x):
         return x/self.norm
     
+def make_act_module(act: str):
+    """ 
+    It appears that using e.g. act = Erf() in the FCNet Sequential constructor
+    caused act to be a single instance of the nn.Module,
+    and appending it multiple times (in each layer) did not work as intended:
+    It was only ever represented once in the net.children() iterator ... 
+    If correct this qualifies as a super nasty stealth bug silico-engineered in a secret university lab.
+    
+    This factory function is a test to fix this behavior in deeper models,
+    by always returning a new Module instance.
+    
+    Usage: seq_model.append(make_act_module('erf'))
+    """
+    if act == "relu":
+        return nn.ReLU()
+    elif act == "erf":
+        return Erf()
+    elif act == "id":
+        return Id()
+    
 def relu(x):
     return x if x > 0 else 0
 
@@ -49,14 +69,12 @@ class FCNet:
         self.N0, self.N1, self.L, self.act, self.bias, self.gamma = N0, N1, L, act, bias, gamma
 
     def Sequential(self):
-        if self.act == "relu":
-            act = nn.ReLU()
-        elif self.act == "erf":
-            act = Erf()
-        elif self.act == "id":
-            act = Id()
-        elif self.act == "quad":
-            act = Quad()
+        # if self.act == "relu":
+        #     act = nn.ReLU()
+        # elif self.act == "erf":
+        #     act = Erf()
+        # elif self.act == "id":
+        #     act = Id()
         modules = []
         first_layer = nn.Linear(self.N0, self.N1, bias=self.bias)
         init.normal_(first_layer.weight, std = 1)
@@ -65,14 +83,16 @@ class FCNet:
         modules.append(Norm(np.sqrt(self.N0)))
         modules.append(first_layer)
         for l in range(self.L-1): 
-            modules.append(act)
+            # modules.append(act)
+            modules.append(make_act_module(self.act))
             modules.append(Norm(np.sqrt(self.N1)))
             layer = nn.Linear(self.N1, self.N1, bias = self.bias)
             init.normal_(layer.weight, std = 1)
             if self.bias:
                 init.normal_(layer.bias,std = 1)
             modules.append(layer)
-        modules.append(act)
+        # modules.append(act)
+        modules.append(make_act_module(self.act))
         modules.append(Norm(np.sqrt(self.N1 * self.gamma)))
         last_layer = nn.Linear(self.N1, 1, bias=self.bias)  
         init.normal_(last_layer.weight, std = 1) 
@@ -81,6 +101,7 @@ class FCNet:
         modules.append(last_layer)
         sequential = nn.Sequential(*modules)
         print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function and feature learning param gamma {self.gamma} \n', sequential)
+        print(f'list of children: {list(sequential.children())} \n')
         return sequential
     
 class ConvNet:
