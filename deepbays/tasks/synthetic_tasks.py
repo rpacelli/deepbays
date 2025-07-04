@@ -38,8 +38,8 @@ class synthetic_1hl_dataset:
     def __init__(self, N0, hidden_dim, act, dataSeed = 1234):
         self.N0 = N0
         self.hidden_dim = hidden_dim
-        model = FCNet(N0, hidden_dim, L=1)
-        self.model = model.Sequential(bias = False, act_func=act)
+        model = FCNet(N0, hidden_dim, L=1, bias = False, act=act)
+        self.model = model.Sequential()
         # Initialize the model parameters
         self.seed = dataSeed
         self.initialize_model()
@@ -47,17 +47,19 @@ class synthetic_1hl_dataset:
     def initialize_model(self):
         # Set the model to evaluation mode and initialize with random weights
         # CK: use private rng for weight init seeded with dataSeed, to fix the realization of the target function and to avoid changing the state of the global torch rng which may be used elsewhere in the code!
-        rng = torch.Generator()
-        rng.manual_seed(self.seed) 
+        saveseed = torch.initial_seed()
+        torch.manual_seed(self.seed) # use dataSeed for 
         self.model.eval()
         with torch.no_grad():
             for param in self.model.parameters():
-                nn.init.normal_(param, mean=0, std=1, generator=rng)
+                nn.init.normal_(param, mean=0, std=1)
+        torch.manual_seed(saveseed) # restore rng seed to before initialization
     
     def make_data(self, P, Pt):
         rng = np.random.RandomState(self.seed) 
         inputs = torch.tensor(rng.randn(P, self.N0), dtype=torch.float)
         test_inputs = torch.tensor(rng.randn(Pt, self.N0), dtype=torch.float)
+        self.model.eval()
         with torch.no_grad():
             targets = self.model(inputs).squeeze()
             test_targets = self.model(test_inputs).squeeze()
