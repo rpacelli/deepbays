@@ -84,6 +84,16 @@ class FC_deep_vanilla():
         self.Ypred = np.dot(K0_invK, self.Y)
         return self.Ypred
     
+    def effectiveKernel(self):
+        assert self.converged, "optimize() was not yet called or did not converge"
+        rKL = self.C
+        for l in range(self.L):
+            rKL = (1. / self.l1[l]) * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+        for l in range(self.L):
+            rKL = self.optQ[l] * rKL
+        A = rKL + (self.T) * np.eye(self.P)
+        return rKL, A
+    
     def averageLoss(self, Ytest):
         bias = Ytest - self.Ypred  
         var = self.rK0L - np.sum(self.K0_invK * self.rK0XL, axis=1)

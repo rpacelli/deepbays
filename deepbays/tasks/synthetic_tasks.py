@@ -46,7 +46,7 @@ class synthetic_1hl_dataset:
 
     def initialize_model(self):
         # Set the model to evaluation mode and initialize with random weights
-        # CK: use private rng for weight init seeded with dataSeed, to fix the realization of the target function and to avoid changing the state of the global torch rng which may be used elsewhere in the code!
+        # CK: save current seed and reseed with dataSeed, to fix the realization of the target function. Then set the state of the rng back to how it was before!
         saveseed = torch.initial_seed()
         torch.manual_seed(self.seed) # use dataSeed for 
         self.model.eval()
@@ -69,7 +69,7 @@ class synthetic_1hl_dataset:
 
 
 class pokerhand_dataset:
-    """Todo: currently add function do download and preprocess data, currently need to ask CK to get the data files """
+    """Todo: add function do download and preprocess data, currently need to ask CK to get the data files """
     
     def __init__(
         self,

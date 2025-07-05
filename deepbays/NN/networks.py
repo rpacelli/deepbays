@@ -69,6 +69,7 @@ class FCNet:
         self.N0, self.N1, self.L, self.act, self.bias, self.gamma = N0, N1, L, act, bias, gamma
 
     def Sequential(self):
+        ## CK: to fix clone error, could also remove the () here and add them in the append calls.
         # if self.act == "relu":
         #     act = nn.ReLU()
         # elif self.act == "erf":
@@ -80,25 +81,28 @@ class FCNet:
         init.normal_(first_layer.weight, std = 1)
         if self.bias:
             init.constant_(first_layer.bias,0)
-        modules.append(Norm(np.sqrt(self.N0)))
         modules.append(first_layer)
+        modules.append(Norm(np.sqrt(self.N0)))
+        # modules.append(first_layer)
         for l in range(self.L-1): 
             # modules.append(act)
             modules.append(make_act_module(self.act))
-            modules.append(Norm(np.sqrt(self.N1)))
+            # modules.append(Norm(np.sqrt(self.N1)))
             layer = nn.Linear(self.N1, self.N1, bias = self.bias)
             init.normal_(layer.weight, std = 1)
             if self.bias:
                 init.normal_(layer.bias,std = 1)
             modules.append(layer)
+            modules.append(Norm(np.sqrt(self.N1)))
         # modules.append(act)
         modules.append(make_act_module(self.act))
-        modules.append(Norm(np.sqrt(self.N1 * self.gamma)))
+        # modules.append(Norm(np.sqrt(self.N1 * self.gamma)))
         last_layer = nn.Linear(self.N1, 1, bias=self.bias)  
         init.normal_(last_layer.weight, std = 1) 
         if self.bias:
                 init.normal_(last_layer.bias,std = 1)
         modules.append(last_layer)
+        modules.append(Norm(np.sqrt(self.N1 * self.gamma)))  # the Norm() layers must come after the Linear layers, otherwise the norms of the gradients will look different. Especially important here for muP!
         sequential = nn.Sequential(*modules)
         print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function and feature learning param gamma {self.gamma} \n', sequential)
         print(f'list of children: {list(sequential.children())} \n')

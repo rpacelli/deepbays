@@ -55,5 +55,23 @@ def train(net, data, labels, criterion, optimizer):
     loss.backward(retain_graph=False)
     optimizer.step()
 
-def regLoss(output, target):
-    return 0.5 * torch.sum((output - target)**2)
+#def regLoss(output, target,net,T,lambda0,lambda1):
+#    loss = 0
+#    for i in range(len(net)):
+#        if i == len(net)-1:
+#            loss += (0.5*lambda1*T)*(torch.linalg.matrix_norm(net[i].weight)**2)
+#        else:
+#            if (isinstance(net[i],nn.Linear) or isinstance(net[i],nn.Conv2d)):
+#                loss += (0.5*lambda0*T)*(torch.linalg.matrix_norm(net[i].weight)**2)
+#    loss += 0.5*torch.sum((output - target)**2)
+#    return loss
+
+def regLoss(output, target, net, T, priors):
+    loss, idx = 0, 0
+    for i in range(1,len(net)):
+        # if (i - 1) % 3 == 0:
+        if i % 3 == 0:  # CK: adapted to different position of Linear layers due to changed Norm() position
+            loss += (0.5*priors[idx]*T) * (torch.linalg.matrix_norm(net[i].weight)**2)
+            idx += 1
+    loss += 0.5 * torch.sum((output - target)**2)
+    return loss
