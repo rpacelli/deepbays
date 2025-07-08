@@ -1,4 +1,5 @@
 
+import os
 import torch, torchvision, torchvision.transforms as t 
 import numpy as np
 import torch.nn as nn
@@ -73,12 +74,14 @@ class pokerhand_dataset:
     
     def __init__(
         self,
-        datadir: str = '/home/keup/torchvision/poker/',
-        labels: list = None
+        datadir: str = '~/torchvision/poker/',
+        labels: list = None,
+        fake_bias: bool = True
         ):
         self.labels = labels
-        self.train_file = datadir + 'train_reducedpoker.pt'
-        self.test_file = datadir + 'test_reducedpoker.pt'
+        self.train_file = os.path.expanduser(datadir) + 'train_reducedpoker.pt'
+        self.test_file = os.path.expanduser(datadir) + 'test_reducedpoker.pt'
+        self.fake_bias = fake_bias
         
 
     def load_poker_data(
@@ -86,7 +89,7 @@ class pokerhand_dataset:
         pt_file: str,
         nsamples: int = -1,
         labels: list = None,
-        regression: bool = True
+        regression: bool = True,
         ):
         """
         Loads a .pt file saved by prepare_poker_data and returns a torch.Tensors X and y,
@@ -98,6 +101,9 @@ class pokerhand_dataset:
             labels: list of class labels to include (e.g. [1,3,4]). Use None for all classes.
             regression: if True, return the labels as float in shape (nsamples, 1), 
                         if False, return the labels as long int in shape (nsamples), for use with crossentropy loss
+            fake_bias: adds an 11th dim to the samples which is always 1.0, 
+                       corresponds to allowing biases in the first layer,
+                       and makes sense because generalization on this task strongly depends on allowing biases.
     
         Returns:
             X: Tensor of shape (nsamples, 10)
@@ -123,6 +129,11 @@ class pokerhand_dataset:
         if nsamples > 0:
             X = X[:nsamples]
             y = y[:nsamples]
+
+        # Append dimension of ones for fake bias feature if requested
+        if self.fake_bias:
+            ones_col = torch.ones((X.size(0), 1), dtype=X.dtype, device=X.device)
+            X = torch.cat((X, ones_col), dim=1)
         
         if regression:
             return X, y.unsqueeze(1).float()
