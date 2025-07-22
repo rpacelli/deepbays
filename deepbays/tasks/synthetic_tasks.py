@@ -5,6 +5,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from ..NN import *
+from deepbays.NN.networks import make_act_module
 
 class random_dataset: 
     def __init__(self, N0):
@@ -67,6 +68,59 @@ class synthetic_1hl_dataset:
         
         return inputs, targets.unsqueeze(1), test_inputs, test_targets.unsqueeze(1)
     
+
+class single_index_dataset:
+    def __init__(self, N0, actfunc, dataSeed = 1234):
+        self.N0 = N0
+        self.actfunc = make_act_module(actfunc)
+        self.seed = dataSeed
+    
+    def make_data(self, P, Pt):
+        rng = np.random.RandomState(self.seed)  
+        # Generate a random normalized teacher weight vector (w)
+        w = rng.randn(self.N0)
+        w /= np.linalg.norm(w)
+        # Create training data
+        X = rng.randn(P, self.N0)
+        Y = np.dot(X, w).reshape(P,1) #equivalent to unsqueeze
+        X = torch.Tensor(X)
+        Y = self.actfunc(torch.Tensor(Y)) # nonlinearity
+        # Create test data
+        Xtest = rng.randn(Pt, self.N0)
+        Ytest = np.dot(Xtest, w).reshape(Pt,1)
+        Xtest = torch.Tensor(Xtest)
+        Ytest = self.actfunc(torch.Tensor(Ytest))
+        return X, Y, Xtest, Ytest
+    
+    
+class hermite_dataset:
+    '''Hermite single index task according to Fig5 in Rubin2025 (assumes physicists convention of hermite polynomial def) '''
+    def __init__(self, N0=30, hermite_coefs=[0, 1, 0, -0.1], dataSeed = 1234, e1_teacher=False):
+        self.N0 = N0
+        self.actfunc = np.polynomial.hermite.Hermite(hermite_coefs)
+        self.seed = dataSeed
+        self.e1_teacher = e1_teacher
+    
+    def make_data(self, P, Pt):
+        rng = np.random.RandomState(self.seed)  
+        # Generate a random normalized teacher weight vector (w)
+        w = rng.randn(self.N0)
+        w /= np.linalg.norm(w)
+        if self.e1_teacher:
+            # overwrite (so as not to change random numbers) random teacher vector with e1 basis vector (dangerous but that is what Rubin2025 write in App.C.3)
+            w = np.zeros_like(w)
+            w[0] = 1.
+        # Create training data
+        X = rng.randn(P, self.N0)
+        Y = self.actfunc(np.dot(X, w)) 
+        X = torch.Tensor(X)
+        Y = torch.Tensor(Y).unsqueeze(1) # shape (P,1)
+        # Create test data
+        Xtest = rng.randn(Pt, self.N0)
+        Ytest = self.actfunc(np.dot(Xtest, w))
+        Xtest = torch.Tensor(Xtest)
+        Ytest = torch.Tensor(Ytest).unsqueeze(1) # shape (Pt,1)
+        return X, Y, Xtest, Ytest
 
 
 class pokerhand_dataset:

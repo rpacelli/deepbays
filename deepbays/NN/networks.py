@@ -103,6 +103,7 @@ class FCNet:
                 init.normal_(last_layer.bias,std = 1)
         modules.append(last_layer)
         modules.append(Norm(np.sqrt(self.N1 * self.gamma)))  # the Norm() layers must come after the Linear layers, otherwise the norms of the gradients will look different. Especially important here for muP!
+        # modules.append(Norm(np.sqrt(self.N1) * self.gamma))  # .... TODO: change to this after fixing overest bug!
         sequential = nn.Sequential(*modules)
         print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function and feature learning param gamma {self.gamma} \n', sequential)
         print(f'list of children: {list(sequential.children())} \n')

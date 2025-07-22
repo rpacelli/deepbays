@@ -55,6 +55,7 @@ def train(net, data, labels, criterion, optimizer):
     loss.backward(retain_graph=False)
     optimizer.step()
 
+
 #def regLoss(output, target,net,T,lambda0,lambda1):
 #    loss = 0
 #    for i in range(len(net)):
@@ -75,3 +76,18 @@ def regLoss(output, target, net, T, priors):
             idx += 1
     loss += 0.5 * torch.sum((output - target)**2)
     return loss
+
+def train_AI(net, data, labels, optimizer, T, priors): # note: no criterion argument
+    net.train()
+    optimizer.zero_grad()
+    dataloss = nonregLoss(net(data), labels)  # no reg in the graph
+    dataloss.backward()
+    for idx, p in enumerate(net.parameters()):
+        p.grad.add_(p, alpha=priors[idx]*T)    # weight decay, adding priors[idx] * T * param to grad on param
+    optimizer.step()
+    return dataloss.detach().item()
+
+
+def nonregLoss(output, target):
+    return 0.5 * torch.sum((output - target)**2)
+    
