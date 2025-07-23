@@ -82,8 +82,9 @@ def train_AI(net, data, labels, optimizer, T, priors): # note: no criterion argu
     optimizer.zero_grad()
     dataloss = nonregLoss(net(data), labels)  # no reg in the graph
     dataloss.backward()
-    for idx, p in enumerate(net.parameters()):
-        p.grad.add_(p, alpha=priors[idx]*T)    # weight decay, adding priors[idx] * T * param to grad on param
+    with torch.no_grad():
+        for idx, p in enumerate(net.parameters()):
+            p.grad.add_(p, alpha=priors[idx]*T)    # weight decay, adding priors[idx] * T * param to grad on param
     optimizer.step()
     return dataloss.detach().item()
 
