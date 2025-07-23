@@ -68,6 +68,7 @@ def train(net, data, labels, criterion, optimizer):
 #    return loss
 
 def regLoss(output, target, net, T, priors):
+    print("Warning, contains bug where weight decay does not affect first layer. Use modregLoss or train_AI() instead")
     loss, idx = 0, 0
     for i in range(1,len(net)):
         # if (i - 1) % 3 == 0:
