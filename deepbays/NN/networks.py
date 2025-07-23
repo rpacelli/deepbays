@@ -87,8 +87,8 @@ class FCNet:
         if self.bias:
                 init.normal_(last_layer.bias,std = 1)
         modules.append(last_layer)
-        modules.append(Norm(np.sqrt(self.N1 * self.gamma))) 
-        # modules.append(Norm(np.sqrt(self.N1) * self.gamma))  # .... TODO: change to this after fixing overest bug!
+        # modules.append(Norm(np.sqrt(self.N1 * self.gamma))) # old line with gamma inside sqrt 
+        modules.append(Norm(np.sqrt(self.N1) * self.gamma)) # amounts to 1/sqrt(N1) for SP and 1/N for full muP with gamma = sqrt(N1) 
         sequential = nn.Sequential(*modules)
         print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function and feature learning param gamma {self.gamma} \n', sequential)
         # print(f'list of children: {list(sequential.children())} \n') ## silent nonlinearity module cloning bug could be seen here
