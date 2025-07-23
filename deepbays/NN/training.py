@@ -77,6 +77,17 @@ def regLoss(output, target, net, T, priors):
     loss += 0.5 * torch.sum((output - target)**2)
     return loss
 
+def modregLoss(output, target, net, T, priors):
+    loss, idx = 0, 0
+    for module in net:
+        # if (i - 1) % 3 == 0:
+        if isinstance(module, nn.Linear):
+        # if i % 3 == 0:  # CK: adapted to different position of Linear layers due to changed Norm() position
+            loss += (0.5*priors[idx]*T) * (torch.linalg.matrix_norm(module.weight)**2)
+            idx += 1  # counter over weight layers
+    loss += 0.5 * torch.sum((output - target)**2)
+    return loss
+
 def train_AI(net, data, labels, optimizer, T, priors): # note: no criterion argument
     net.train()
     optimizer.zero_grad()

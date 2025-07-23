@@ -33,28 +33,22 @@ class Norm(torch.nn.Module):
     def forward(self, x):
         return x/self.norm
     
-def make_act_module(act: str):
-    """ 
-    It appears that using e.g. act = Erf() in the FCNet Sequential constructor
-    caused act to be a single instance of the nn.Module,
-    and appending it multiple times (in each layer) did not work as intended:
-    It was only ever represented once in the net.children() iterator ... 
-    If correct this qualifies as a super nasty stealth bug silico-engineered in a secret university lab.
-    
-    This factory function is a test to fix this behavior in deeper models,
-    by always returning a new Module instance.
-    
-    Usage: seq_model.append(make_act_module('erf'))
-    """
-    if act == "relu":
-        return nn.ReLU()
-    elif act == "erf":
-        return Erf()
-    elif act == "id":
-        return Id()
-    
-def relu(x):
+def relu(x):  # CK: deprecated I think
+    print("Warning: this relu function which is not a nn.Module, and may be removed soon")
     return x if x > 0 else 0
+
+def make_act_module(actfunc_string):
+    """Takes 'relu', 'erf', 'id' and returns a corresponding torch.nn.Module instance.
+       (This func fixes a silent nonlinearity module cloning 'bug', 
+        but is also useful for importing elsewhere.) """
+    if actfunc_string == "relu":
+        return nn.ReLU() 
+    elif actfunc_string == "erf":
+        return Erf()
+    elif actfunc_string == "id":
+        return Id() 
+    else:
+        raise ValueError(f"nonlinearity {actfunc_string} appears to not implemented so far!")
 
 class FCNet: 
     def __init__(self, 
@@ -69,44 +63,35 @@ class FCNet:
         self.N0, self.N1, self.L, self.act, self.bias, self.gamma = N0, N1, L, act, bias, gamma
 
     def Sequential(self):
-        ## CK: to fix clone error, could also remove the () here and add them in the append calls.
-        # if self.act == "relu":
-        #     act = nn.ReLU()
-        # elif self.act == "erf":
-        #     act = Erf()
-        # elif self.act == "id":
-        #     act = Id()
         modules = []
+        # build input layer
         first_layer = nn.Linear(self.N0, self.N1, bias=self.bias)
-        init.normal_(first_layer.weight, std = 1)
+        init.normal_(first_layer.weight, std = 1)   # todo: why not initialize from the prior std?
         if self.bias:
-            init.constant_(first_layer.bias,0)
+            init.constant_(first_layer.bias,0)  # CK: why is bias init with constant_ here, but with normal_ an other layers? maybe harmonize this.
         modules.append(first_layer)
         modules.append(Norm(np.sqrt(self.N0)))
-        # modules.append(first_layer)
+        # build intermediary layers
         for l in range(self.L-1): 
-            # modules.append(act)
             modules.append(make_act_module(self.act))
-            # modules.append(Norm(np.sqrt(self.N1)))
             layer = nn.Linear(self.N1, self.N1, bias = self.bias)
             init.normal_(layer.weight, std = 1)
             if self.bias:
                 init.normal_(layer.bias,std = 1)
             modules.append(layer)
             modules.append(Norm(np.sqrt(self.N1)))
-        # modules.append(act)
+        # build output layer
         modules.append(make_act_module(self.act))
-        # modules.append(Norm(np.sqrt(self.N1 * self.gamma)))
         last_layer = nn.Linear(self.N1, 1, bias=self.bias)  
         init.normal_(last_layer.weight, std = 1) 
         if self.bias:
                 init.normal_(last_layer.bias,std = 1)
         modules.append(last_layer)
-        modules.append(Norm(np.sqrt(self.N1 * self.gamma)))  # the Norm() layers must come after the Linear layers, otherwise the norms of the gradients will look different. Especially important here for muP!
+        modules.append(Norm(np.sqrt(self.N1 * self.gamma))) 
         # modules.append(Norm(np.sqrt(self.N1) * self.gamma))  # .... TODO: change to this after fixing overest bug!
         sequential = nn.Sequential(*modules)
         print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function and feature learning param gamma {self.gamma} \n', sequential)
-        print(f'list of children: {list(sequential.children())} \n')
+        # print(f'list of children: {list(sequential.children())} \n') ## silent nonlinearity module cloning bug could be seen here
         return sequential
     
 class ConvNet:
