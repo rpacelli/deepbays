@@ -26,6 +26,12 @@ class Id(torch.nn.Module):
     def forward(self, x):
         return x
 
+class Square(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+    def forward(self, x):
+        return torch.square(x)
+
 class Norm(torch.nn.Module):
     def __init__(self, norm):
         super().__init__()
@@ -38,7 +44,7 @@ def relu(x):  # CK: deprecated I think
     return x if x > 0 else 0
 
 def make_act_module(actfunc_string):
-    """Takes 'relu', 'erf', 'id' and returns a corresponding torch.nn.Module instance.
+    """Takes 'relu', 'erf', 'id', 'square' and returns a corresponding torch.nn.Module instance.
        (This func fixes a silent nonlinearity module cloning 'bug', 
         but is also useful for importing elsewhere.) """
     if actfunc_string == "relu":
@@ -47,6 +53,8 @@ def make_act_module(actfunc_string):
         return Erf()
     elif actfunc_string == "id":
         return Id() 
+    elif actfunc_string == "square":
+        return Square()
     else:
         raise ValueError(f"nonlinearity {actfunc_string} appears to not implemented so far!")
 

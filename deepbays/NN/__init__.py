@@ -7,3 +7,4 @@ from .training import train, regLoss, test
 from .training import LangevinOpt
 from .networks import FCNet
 from .networks import ConvNet
+from .networks import make_act_module

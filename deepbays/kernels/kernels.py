@@ -88,6 +88,15 @@ def mean_relu(c):
 def kernel_id(cxx, cxy, cyy):
     return cxy    
 
+def kernel_square(cxx, cxy, cyy):
+    ''' 
+    For phase retrieval with phi(x) = x**2. The form is easy because 
+    <phi(x)phi(y)>_N(0,C) = <x x y y>_N(0,C) 
+                          = C_xx C_yy + 2 C_xy^2 
+    is the fourth central moment of a Gaussian, so given by Wick's (Isserlis) theorem.
+    '''
+    return cxx * cyy + 2 * cxy**2
+
 #def kmatrix(C,kernel):
 #    P = len(C)
 #    K = np.zeros_like(C)
