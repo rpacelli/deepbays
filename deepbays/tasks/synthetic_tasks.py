@@ -201,4 +201,11 @@ class pokerhand_dataset:
     
     
 
+def add_first_layer_bias(X, Xtest):
+    """ Adds a column of ones to the datamatrix, which is the classic trick of emulating trainable biases in the first layer. """
+    Xnew = torch.concat([X, torch.ones(X.shape[0],1)], dim=1)
+    Xtestnew = torch.concat([Xtest, torch.ones(Xtest.shape[0],1)], dim=1)
+    return Xnew, Xtestnew
+
+
     

@@ -7,3 +7,4 @@ from .synthetic_tasks import synthetic_1hl_dataset
 from .synthetic_tasks import linear_dataset
 from .synthetic_tasks import single_index_dataset
 from .synthetic_tasks import hermite_dataset
+from .synthetic_tasks import add_first_layer_bias
