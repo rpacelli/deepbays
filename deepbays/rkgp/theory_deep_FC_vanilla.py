@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, minimize_scalar, brent, brentq, newton
 from .. import kernels
 import torch
 
@@ -33,14 +33,67 @@ class FC_deep_vanilla():
         f.backward()
         return Q.grad.data.detach().numpy()
 
+    def LogLogEffective1DAction(self, logQscalar): 
+        # for Q all equal due to symmetry. Taking log is fine because Q < 0 not physical. Working with logQ makes big brentq brackets fast.
+        return torch.log(self.effectiveAction(torch.exp(logQscalar).broadcast_to(self.L)))
+    
+    def LogLogEff1DActionPrime(self, logQ:float): # First derivative of loglog action, very benign for finding root logQstar.
+        logQ = torch.tensor(logQ, dtype = torch.float64, requires_grad = True)
+        g = torch.autograd.grad(self.LogLogEffective1DAction(logQ), logQ)[0]
+        return g.item()
+    
+    # def LogLogEff1DActionPrime(self, logQ:float): # previous, equivalent impl
+    #     logQ = torch.tensor(logQ, dtype = torch.float64, requires_grad = True)
+    #     g = self.LogLogEffective1DAction(logQ)
+    #     g.backward()
+    #     return logQ.grad.detach().item()
+
+    def optimize_LogLog(self, logQmin=-4., logQmax=7.): # fast and stable also for muP.
+        """ 
+        Find saddlepoint of effective action in log-log space using brentq bracket.
+        Uses scalar Q, since N1 is the same across hidden layers and action is symm wrt. Qs.
+        Note: here lims are natural log -> defaults are exp(-4) = 0.018, and exp(7) = 1096 
+        """
+        logQstar = brentq(self.LogLogEff1DActionPrime, logQmin, logQmax)
+        self.optQ = np.exp(logQstar) * np.ones(self.L)
+        isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) # tests additionally for smallness of grads, not only closeness to true root
+        self.converged = isClose.all()
+
     def optimize(self, Q0 = 1.):
         if isinstance(Q0, float):
-            Q0 = np.ones(self.L)
+            Q0 = Q0 * np.ones(self.L)
         self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-8)
-        isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) 
+        isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) # tests additionally for smallness of grads, not only closeness to true root
         self.converged = isClose.all()
         #print("\nis exact solution close to zero?", isClose)   
         #print(f"{self.L} hidden layer optQ is {self.optQ}")
+
+    def optimize_smart(self, logQmin=-4., logQmax=7., showdebugplots=True):
+        try:
+            self.optimize_LogLog( logQmin=logQmin, logQmax=logQmax)
+        except:
+            print(f'brentq with logQ brackets a={logQmin} g(a)={self.LogLogEff1DActionPrime(logQmin)}, b={logQmax} g(b)={self.LogLogEff1DActionPrime(logQmax)} failed. ')
+            print('Plotting action to aid problem diagnosis and finding local init from plot values...')
+            Q0new = self.debug_action(show=showdebugplots)
+            self.optimize(Q0new)
+            if not self.converged:
+                print('... did not work - needs manual help or debugging.')
+    
+    def debug_action(self, Qminexp=-2., Qmaxexp=4., show=True):
+        Qs = np.logspace(Qminexp, Qmaxexp, num=40)
+        t_ones = torch.ones(self.L, dtype = torch.float64, requires_grad=False)
+        logaction_vals =  [np.log(self.effectiveAction(Q*t_ones).item()) for Q in Qs]
+        # loglogaction_vals =  [self.LogLogEffective1DAction(np.log10(Q)*t_ones).item() for Q in Qs]
+        # loglogactionprime_vals =  [self.LogLogEff1DActionPrime(np.log10(Q)) for Q in Qs]
+        if show:
+            import matplotlib.pyplot as plt
+            dfig, dax = plt.subplots() 
+            dax.plot(Qs, logaction_vals)
+            # dax.plot(Qs, loglogaction_vals, linestyle='dashed')
+            # dax.plot(Qs, loglogactionprime_vals, linestyle='dotted')
+            dax.set_xscale('log')
+        Qinit_new = Qs[np.argmin(logaction_vals)]
+        return Qinit_new
 
     def setIW(self):
         self.optQ = np.ones(self.L)
