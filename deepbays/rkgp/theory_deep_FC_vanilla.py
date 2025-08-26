@@ -33,18 +33,22 @@ class FC_deep_vanilla():
         f.backward()
         return Q.grad.data.detach().numpy()
 
-    def LogLogEffective1DAction(self, logQscalar): 
-        # for Q all equal due to symmetry. Taking log is fine because Q < 0 not physical. Working with logQ makes big brentq brackets fast.
-        return torch.log(self.effectiveAction(torch.exp(logQscalar).broadcast_to(self.L)))
+    def LogLogEffective1DAction(self, logQscalar, offset=0.): 
+        """
+        Exploit that Qs are all equal due to symmetry. 
+        Working with logQ makes big brentq brackets fast and is fine because Q < 0 not physical.
+        If effective action should be negative, log-action may be NaN; a positive offset kwarg can be used to shift action upwards.
+        """
+        return torch.log(offset + self.effectiveAction(torch.exp(logQscalar).broadcast_to(self.L)))
     
-    def LogLogEff1DActionPrime(self, logQ:float): # First derivative of loglog action, very benign for finding root logQstar.
+    def LogLogEff1DActionPrime(self, logQ:float, offset=0.): # First derivative of loglog action, very benign for finding root logQstar.
         logQ = torch.tensor(logQ, dtype = torch.float64, requires_grad = True)
-        g = torch.autograd.grad(self.LogLogEffective1DAction(logQ), logQ)[0]
+        g = torch.autograd.grad(self.LogLogEffective1DAction(logQ, offset=offset), logQ)[0]
         return g.item()
     
-    # def LogLogEff1DActionPrime(self, logQ:float): # previous, equivalent impl
+    # def LogLogEff1DActionPrime(self, logQ:float, offset=0.): # previous, equivalent impl
     #     logQ = torch.tensor(logQ, dtype = torch.float64, requires_grad = True)
-    #     g = self.LogLogEffective1DAction(logQ)
+    #     g = self.LogLogEffective1DAction(logQ, offset=offset)
     #     g.backward()
     #     return logQ.grad.detach().item()
 
@@ -52,9 +56,17 @@ class FC_deep_vanilla():
         """ 
         Find saddlepoint of effective action in log-log space using brentq bracket.
         Uses scalar Q, since N1 is the same across hidden layers and action is symm wrt. Qs.
-        Note: here lims are natural log -> defaults are exp(-4) = 0.018, and exp(7) = 1096 
+        Notes: 
+            - Lims are natural log -> defaults are exp(-4) = 0.018, and exp(7) = 1096 
+            - Checks for negative eff. action at Q = 1, which may happen if Qstar close to 1, and attempts to shift log accordingly to avoid nan.
+              If this should fail (not observed so far), fall back to standard optimize() without logs.
         """
-        logQstar = brentq(self.LogLogEff1DActionPrime, logQmin, logQmax)
+        neg_offset = self.effectiveAction(torch.ones(self.L)).item()
+        if neg_offset <= 0.: 
+            offset = -2. * neg_offset # eff. action is negative close to Q=1, need global positive offset to make log action well defined. 
+        else:
+            offset = 0.
+        logQstar = brentq(self.LogLogEff1DActionPrime, logQmin, logQmax, args=(offset,))
         self.optQ = np.exp(logQstar) * np.ones(self.L)
         isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) # tests additionally for smallness of grads, not only closeness to true root
         self.converged = isClose.all()
@@ -69,10 +81,13 @@ class FC_deep_vanilla():
         #print(f"{self.L} hidden layer optQ is {self.optQ}")
 
     def optimize_smart(self, logQmin=-4., logQmax=7., showdebugplots=True):
+        """ Tries log-log optimizer first, if it fails finds approx minimum by line search and initializes optimize there. Add more bells and whistles here if need arises."""
         try:
             self.optimize_LogLog( logQmin=logQmin, logQmax=logQmax)
         except:
             print(f'brentq with logQ brackets a={logQmin} g(a)={self.LogLogEff1DActionPrime(logQmin)}, b={logQmax} g(b)={self.LogLogEff1DActionPrime(logQmax)} failed. ')
+            self.converged = False
+        if not self.converged:
             print('Plotting action to aid problem diagnosis and finding local init from plot values...')
             Q0new = self.debug_action(show=showdebugplots)
             self.optimize(Q0new)
