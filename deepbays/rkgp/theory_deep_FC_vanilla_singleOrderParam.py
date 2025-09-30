@@ -3,7 +3,7 @@ from scipy.optimize import fsolve
 from .. import kernels
 import torch
 
-class FC_deep_nested():
+class FC_deep_vanilla_singleOrderParam():
     def __init__(self, 
                  L      : int, 
                  N1     : int, 
@@ -17,11 +17,12 @@ class FC_deep_nested():
     def effectiveAction(self, Q):
         rKL = torch.tensor(self.C, dtype = torch.float64, requires_grad = False)
         for l in range(self.L):
-            orderParam = Q[l] / self.l1[l]
-            rKL = orderParam * self.kernelTorch(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+            rKL = ((1. / self.l1[l])) * self.kernelTorch(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+        for l in range(self.L):
+            rKL *= Q
         A = rKL +  self.T * torch.eye(self.P) 
         invA = torch.inverse(A)
-        return ( torch.sum(Q - torch.log(Q))
+        return ( self.L * Q - self.L * torch.log(Q) 
                 + (1/self.N1) * torch.matmul(self.y, torch.matmul(invA, self.y)) 
                 + (1/self.N1) * torch.logdet(A)
                  )
@@ -34,15 +35,16 @@ class FC_deep_nested():
 
     def optimize(self, Q0 = 1.):
         if isinstance(Q0, float):
-            Q0 = np.ones(self.L)
-        self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-5)
+            Q0 = 1.
+        self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-8)
         isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) 
         self.converged = isClose.all()
+        self.S = self.effectiveAction(torch.tensor(self.optQ))
         #print("\nis exact solution close to zero?", isClose)   
         #print(f"{self.L} hidden layer optQ is {self.optQ}")
 
     def setIW(self):
-        self.optQ = np.ones(self.L)
+        self.optQ = 1.
 
     def preprocess(self, X, Y):
         self.X = X
@@ -65,11 +67,15 @@ class FC_deep_nested():
         rK0L = self.C0 
         rK0XL = self.C0X
         for l in range(self.L):
-            orderParam = self.optQ[l] / self.l1[l]
             rKXL = rKL.diagonal() 
-            rK0XL = orderParam * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
-            rK0L = orderParam * self.kernel(rK0L, rK0L, rK0L)
-            rKL = orderParam * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+            rK0XL = (1. / self.l1[l]) * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
+            rK0L = (1. / self.l1[l]) * self.kernel(rK0L, rK0L, rK0L)
+            rKL = (1. / self.l1[l]) * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+        for l in range(self.L):
+            rKXL = self.optQ * rKXL
+            rK0XL = self.optQ * rK0XL
+            rK0L = self.optQ * rK0L
+            rKL = self.optQ * rKL
         A = rKL + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
         K0_invK = np.matmul(rK0XL, invK)
@@ -84,3 +90,4 @@ class FC_deep_nested():
         var = self.rK0L - np.sum(self.K0_invK * self.rK0XL, axis=1)
         predLoss = bias**2 + var
         return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
+    

@@ -71,6 +71,12 @@ def kernel_relu(cxx, cxy, cyy):
     kappa = (1 / (2 * np.pi)) * (u * (np.pi - np.arccos(u)) + np.sqrt(1 - u**2))
     return np.sqrt(cxx * cyy) * kappa
 
+def kernel_quadratic(cxx, cxy, cyy):
+    return cxx*cyy + 2 * cxy**2
+
+def mean_quadratic(c):
+    return c
+
 def kernel_relu_bias(cxx, cxy, cyy):
     u = cxy / np.sqrt(cxx * cyy)
     kappa = (1 / (2 * np.pi)) * (u * (np.pi - np.arccos(u)) + np.sqrt(1 - u**2))

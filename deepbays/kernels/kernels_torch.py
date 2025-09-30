@@ -21,6 +21,9 @@ def computeKmatrixMultipleCTorch(C1,C12,C2,  kernel):
 def kernel_erf_torch(cxx,cxy,cyy):
     return (2 / torch.pi) * torch.arcsin((2 * cxy)/torch.sqrt((1 + 2 * cxx)*(1 + 2 * cyy)))
 
+def kernel_quadratic_torch(cxx,cxy,cyy):
+    return cxx*cyy + 2*torch.square(cxy)
+
 def kernel_erf_derivative_xy_torch(cxx,cxy,cyy):
     return (4 / torch.pi) * ( 1 / ( torch.sqrt(1 + 2 * cxx) * torch.sqrt(1 + 2 * cyy) * torch.sqrt(1 - 4*cxy*cxy/(4 * cxx * cyy + 2 * cxx + 2 * cyy + 1 ) ) ) )
 

@@ -5,69 +5,99 @@ from .. import kernels
 import torch
 
 class FC_1HL_nonodd():
-    def __init__(self, 
-                 N1   : int, 
-                 T    : float, 
-                 l0   : float = 1.0,
-                 l1   : float = 1.0,
-                 act  : str = "erf", 
-                 bias : bool = False):
-        self.N1, self.l0, self.l1, self.T = N1, l0, l1, T
+    def __init__(self, N1, T, l0 = 1.0, l1 = 1.0, act = "relu"):
+        self.N1 = N1
+        self.l0 = l0
+        self.l1 = l1 
+        self.T = T
+        self.L = 1
         self.kernel = eval(f"kernels.kernel_{act}")
-        if bias: 
-            self.kernel = eval(f"kernels.kernel_{act}_bias")
-        self.mean_func = eval(f"kernels.mean_{act}")
+        self.mean = eval(f"kernels.mean_{act}")
 
-    def effectiveAction(self, x):
-        A_diag = (self.T + (x/self.l1) * self.eigvalK + (1-x)*np.outer(self.mean, self.mean)/self.l1)
-        invA = np.diag(1/A_diag)
-        return ( x - np.log(x)
-            + (1/self.N1) * np.sum(np.log(self.T + x * self.eigvalK / self.l1 + (1-x)*np.outer(self.mean, self.mean)/self.l1))
-            + (1/self.N1) * np.dot(self.yT, np.dot(invA, self.yT)) )
-
-    def optimize(self, x0 = 1.): # x0 is initial condition
-        optQ = minimize(self.effectiveAction, x0, bounds = ((1e-8,np.inf),) , tol=1e-12)
-        self.optQ = (optQ.x).item()
-        assert self.optQ > 0 , "Unphysical solution found (Q is negative)."
-
-    def setIW(self):
-        self.optQ = 1
-
-    def preprocess(self, Xtrain, Ytrain):
-        self.P, self.N0 = Xtrain.shape
-        self.corrNorm = 1/(self.N0*self.l0)
-        self.C = np.dot(Xtrain, Xtrain.T) * self.corrNorm
-        self.Xtrain = Xtrain
-        self.Ytrain = Ytrain
+    def preprocess(self, X, Y):
+        self.X = X
+        self.Y = Y.squeeze().clone().detach().double()
+        self.P, self.N0 = X.shape
+        self.corrNorm = 1/(self.N0 * self.l0)
+        self.C = np.dot(X, X.T) * self.corrNorm
         self.CX = self.C.diagonal()
-        self.K = kernels.computeKmatrix(self.C, self.kernel) 
-        self.eigvalK, eigvecK = np.linalg.eigh(self.K)
-        self.diagK = np.diagflat(self.eigvalK)
-        self.Udag = eigvecK.T
-        self.yT = np.matmul(self.Udag, Ytrain.squeeze())
-        self.mean = self.mean_fun(self.CX)
+        self.y = Y.squeeze().to(torch.float64)
+        self.y.requires_grad = False
+        self.K = torch.tensor(kernels.computeKmatrix(self.C, self.kernel), dtype = torch.float64, requires_grad = False)
+        self.Km = torch.tensor(self.mean(self.CX), dtype = torch.float64, requires_grad = False)
+        self.M = torch.outer(self.Km, self.Km)
 
-    def computeTestsetKernels(self, Xtest):
+    def optimize(self, x0 = [1., 0.], lr=0.001, tolerance = 1e-7, max_epochs = 5000, maxCheck = 50, reg = 1000.0, verbose=True):
+
+        Q0 = torch.tensor(x0)
+        Q = Q0.clone().detach().requires_grad_(True)
+        self.alpha = self.P / self.N1
+        def S(Qvec):
+            KR = (Q[0]/self.l1)*self.K - (Q[0]-1/(1+Q[1]))*self.M / self.l1
+            gpKernel = self.T*torch.eye(self.P) + KR
+            gpKernel_inv = torch.linalg.inv(gpKernel)
+            dgp_dQ = - self.M / (self.l1 * (1+Q[1])**2)
+            dgp_dbarQ = self.K / self.l1 - self.M / self.l1
+            term1 = - Q[1] + (self.alpha/self.P) * torch.trace(torch.matmul(gpKernel_inv,dgp_dbarQ)) - (self.alpha/self.P)*torch.matmul( self.Y, torch.matmul(gpKernel_inv, torch.matmul( dgp_dbarQ, torch.matmul( gpKernel_inv , self.Y ))) )
+            term2 = - Q[0] + 1/(1+Q[1]) + (self.alpha/self.P) * torch.trace(torch.matmul(gpKernel_inv,dgp_dQ)) - (self.alpha/self.P)*torch.matmul( self.Y, torch.matmul(gpKernel_inv, torch.matmul( dgp_dQ, torch.matmul( gpKernel_inv , self.Y ))) )
+            return term1**2 + term2**2
+        optimizer = torch.optim.Adam([Q], lr)
+        previous_loss = 100.
+        self.optState = False
+        self.optEpochs = 0
+        check = 0
+        for i in range(max_epochs):
+            optimizer.zero_grad()
+            loss = S(Q)
+            loss.backward()
+            optimizer.step()
+            loss_change = abs(loss.item() - previous_loss)
+            if (loss_change < tolerance):
+                check += 1
+            if (loss_change < tolerance) and (check > maxCheck):
+                self.optState = True
+                break
+            previous_loss = loss.item()
+            self.optEpochs +=1
+        self.optQ = Q.detach().numpy()
+        if verbose: print(f"opt state: {self.optState}, checks: {check}, epochs: {self.optEpochs}, Qs: {self.optQ}")
+    
+    def setIW(self):
+        self.optQ[0] = 1.
+        self.optQ[1] = 0.
+    
+    def computeTestsetKernels(self, X, Xtest):
         self.Ptest = len(Xtest)
         self.C0 = np.dot(Xtest, Xtest.T).diagonal() * self.corrNorm
-        self.C0X = np.dot(Xtest, self.Xtrain.T) * self.corrNorm
-        self.K0 =  self.kernel(self.C0, self.C0, self.C0) 
-        self.K0X = self.kernel(self.C0[:,None], self.C0X, self.CX[None, :])
-        self.m0 = self.mean_fun(self.C0)
+        self.C0X = np.dot(Xtest, X.T) * self.corrNorm
+        self.Km0 = torch.tensor(self.mean(self.C0), dtype = torch.float64, requires_grad = False)
+        self.MXX = self.M.detach().numpy()
+        self.M0X = torch.outer(self.Km0, self.Km).detach().numpy()
+        self.M0 = torch.outer(self.Km0, self.Km0).diagonal().detach().numpy()
     
     def predict(self, Xtest):
-        self.computeTestsetKernels(Xtest)
-        self.orderParam = self.optQ / self.l1
-        A = self.orderParam * self.K + (self.T) * np.eye(self.P) + (1/self.l1-self.orderParam)*np.outer(self.mean, self.mean)
+        self.computeTestsetKernels(self.X, Xtest)
+        rKL = self.C
+        rK0L = self.C0 
+        rK0XL = self.C0X
+
+        rKXL = rKL.diagonal() 
+
+        rKL = (self.optQ[0] / self.l1) * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:]) - (self.optQ[0]-1/(1+self.optQ[1])) * self.MXX / self.l1
+        rK0XL = (self.optQ[0] / self.l1) * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :]) - (self.optQ[0]-1/(1+self.optQ[1])) * self.M0X / self.l1
+        rK0L = (self.optQ[0] / self.l1) * self.kernel(rK0L, rK0L, rK0L) - (self.optQ[0]-1/(1+self.optQ[1])) * self.M0 / self.l1
+
+        A = rKL + (self.T) * np.eye(self.P)
         invK = np.linalg.inv(A)
-        self.rK0X = self.orderParam * self.K0X + (1/self.l1 - self.orderParam)* np.outer( self.m0, self.mean)
-        self.K0_invK = np.matmul(self.rK0X, invK)
-        self.Ypred =  np.dot(self.K0_invK, self.Ytrain)
+        K0_invK = np.matmul(rK0XL, invK)
+        self.rK0L = rK0L
+        self.K0_invK = K0_invK
+        self.rK0XL = rK0XL
+        self.Ypred = np.dot(K0_invK, self.Y).reshape(-1, 1)
         return self.Ypred
     
     def averageLoss(self, Ytest):
-        self.rK0 = self.orderParam * self.K0 + (1/self.l1 - self.orderParam)* np.outer( self.m0, self.m0)
-        bias = Ytest - self.Ypred 
-        var = self.rK0 - np.sum(self.K0_invK * self.rK0X, axis=1)
-        predLoss = bias**2 + var 
+        bias = Ytest - self.Ypred  
+        var = self.rK0L - np.sum(self.K0_invK * self.rK0XL, axis=1)
+        predLoss = bias**2 + var
         return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
