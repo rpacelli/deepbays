@@ -13,6 +13,12 @@ class Erf(torch.nn.Module):
         super().__init__()
     def forward(self, x):
         return torch.erf(x)
+    
+class Quad(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+    def forward(self, x):
+        return x**2
 
 class Id(torch.nn.Module):
     def __init__(self):
@@ -47,6 +53,8 @@ class FCNet:
             act = Erf()
         elif self.act == "id":
             act = Id()
+        elif self.act == "quad":
+            act = Quad()
         modules = []
         first_layer = nn.Linear(self.N0, self.N1, bias=self.bias)
         init.normal_(first_layer.weight, std = 1)

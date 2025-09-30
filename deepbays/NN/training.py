@@ -8,30 +8,33 @@ from torch import nn
 from torch.optim import Optimizer
 
 class LangevinOpt(optim.Optimizer):
-    def __init__(self, model: nn.Module, lr, temperature):
-        defaults = {
-            'lr': lr, 
-            'temperature': temperature
-        }
-        groups = []
-        for i, layer in enumerate(model.children()):
-            groups.append({'params': layer.parameters(), 
-                           'lr': lr, 
-                           'temperature': temperature})
-        super(LangevinOpt, self).__init__(groups, defaults)
-        
+    def __init__(self, model: nn.Module, lr, temperature, priors):
+        defaults = {'lr': lr, 'temperature': temperature}
+        param_groups = []
+        for layer in model.children():
+            if isinstance(layer, (nn.Linear)):
+                param_groups.append({'params': layer.parameters()})
+
+        super().__init__(param_groups, defaults)
+
+        for group, lambda_j in zip(self.param_groups, priors):
+            group['lambda'] = lambda_j
+            group['noise_std'] = (2 * group['lr'] * group['temperature']) ** 0.5
+
+        assert len(priors) == len(self.param_groups), "Lenght mismatch"
+
     @torch.no_grad()
     def step(self, closure=None):
         for group in self.param_groups:
-            learning_rate = group['lr']
-            temperature = group['temperature']
-            for parameter in group['params']:
-                if parameter.grad is None:
-                    continue
-                d_p = torch.randn_like(parameter) * (2*learning_rate*temperature)**0.5
-                d_p.add_(parameter.grad, alpha=-learning_rate)
-                parameter.add_(d_p)
+            for param in group['params']:
+                if param.grad is not None:
+                    grad = param.grad.detach()
+                    noise = torch.randn_like(param, memory_format=torch.preserve_format) * group['noise_std']
+                    param.add_(-group['lr'] * (grad + group['temperature'] * group['lambda'] * param) + noise)
 
+
+
+    
 def test(net, test_data, test_labels, criterion):
         net.eval()
         with torch.no_grad():
@@ -46,32 +49,11 @@ def computeNormsAndOverlaps(Snet,Tnet):
     overlap = torch.dot(Snet[i].weight.flatten(),Tnet[i].weight.flatten())
     return Snorm, Tnorm, overlap
 
-def train(net, data, labels, criterion, optimizer, T, priors):
-    net.train()
-    inputs, targets = data, labels#).unsqueeze(1)
+def train(net, data, labels, criterion, optimizer):
     optimizer.zero_grad()
-    outputs = net(inputs)
-    loss = criterion(outputs.float(), targets.float(),net,T,priors)
-    loss.backward()
+    loss = criterion(net(data), labels)
+    loss.backward(retain_graph=False)
     optimizer.step()
-    return loss.item() 
 
-#def regLoss(output, target,net,T,lambda0,lambda1):
-#    loss = 0
-#    for i in range(len(net)):
-#        if i == len(net)-1:
-#            loss += (0.5*lambda1*T)*(torch.linalg.matrix_norm(net[i].weight)**2)
-#        else:
-#            if (isinstance(net[i],nn.Linear) or isinstance(net[i],nn.Conv2d)):
-#                loss += (0.5*lambda0*T)*(torch.linalg.matrix_norm(net[i].weight)**2)
-#    loss += 0.5*torch.sum((output - target)**2)
-#    return loss
-
-def regLoss(output, target, net, T, priors):
-    loss, idx = 0, 0
-    for i in range(1,len(net)):
-        if (i - 1) % 3 == 0:
-            loss += (0.5*priors[idx]*T) * (torch.linalg.matrix_norm(net[i].weight)**2)
-            idx += 1
-    loss += 0.5 * torch.sum((output - target)**2)
-    return loss
+def regLoss(output, target):
+    return 0.5 * torch.sum((output - target)**2)
