@@ -53,7 +53,8 @@ def kernel_id_torch(cxx, cxy, cyy):
 
 def kernel_square_torch(cxx, cxy, cyy):
     ''' 
-    For phase retrieval with phi(x) = x**2. The form is easy because 
+    For quadratic activation function phi(x) = x**2 (e.g. in phase retrieval). 
+    The form is easy because 
     <phi(x)phi(y)>_N(0,C) = <x x y y>_N(0,C) 
                           = C_xx C_yy + 2 C_xy^2 
     is the fourth central moment of a Gaussian, so given by Wick's (Isserlis) theorem.
