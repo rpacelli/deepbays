@@ -44,18 +44,17 @@ class synthetic_1hl_dataset:
         self.model = model.Sequential()
         # Initialize the model parameters
         self.seed = dataSeed
+        self.teacherseed = dataSeed * 2
         self.initialize_model()
 
     def initialize_model(self):
-        # Set the model to evaluation mode and initialize with random weights
-        # CK: save current seed and reseed with dataSeed, to fix the realization of the target function. Then set the state of the rng back to how it was before!
-        saveseed = torch.initial_seed()
-        torch.manual_seed(self.seed) # use dataSeed for 
+        # create separate rng for initialization of the teacher weights to not change the global torch rng states (using numpy here because in torch v.1.12 generators are not yet standard)
+        rng = np.random.RandomState(self.teacherseed) 
         self.model.eval()
         with torch.no_grad():
             for param in self.model.parameters():
-                nn.init.normal_(param, mean=0, std=1)
-        torch.manual_seed(saveseed) # restore rng seed to before initialization
+                vals = rng.normal(size=param.shape)
+                param.copy_(torch.from_numpy(vals).to(dtype=param.dtype, device=param.device))
     
     def make_data(self, P, Pt):
         rng = np.random.RandomState(self.seed) 
@@ -198,7 +197,6 @@ class pokerhand_dataset:
         inputs, targets = self.load_poker_data(self.train_file, nsamples=P, labels=self.labels, regression=True)
         test_inputs, test_targets = self.load_poker_data(self.test_file, nsamples=Pt, labels=self.labels, regression=True)
         return inputs, targets, test_inputs, test_targets
-    
     
 
 def add_first_layer_bias(X, Xtest):
