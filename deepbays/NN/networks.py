@@ -26,6 +26,12 @@ class Id(torch.nn.Module):
     def forward(self, x):
         return x
 
+class Square(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+    def forward(self, x):
+        return torch.square(x)
+
 class Norm(torch.nn.Module):
     def __init__(self, norm):
         super().__init__()
@@ -33,8 +39,26 @@ class Norm(torch.nn.Module):
     def forward(self, x):
         return x/self.norm
     
-def relu(x):
+def relu(x):  # CK: deprecated I think
+    print("Warning: this relu function which is not a nn.Module, and may be removed soon")
     return x if x > 0 else 0
+
+def make_act_module(actfunc_string):
+    """Takes 'relu', 'erf', 'id', 'square' and returns a corresponding torch.nn.Module instance.
+       (This func fixes a silent nonlinearity module cloning 'bug', 
+        but is also useful for importing elsewhere.) """
+    if actfunc_string == "relu":
+        return nn.ReLU() 
+    elif actfunc_string == "erf":
+        return Erf()
+    elif actfunc_string == "id":
+        return Id() 
+    elif actfunc_string == "square":
+        return Square()
+    elif actfunc_string == "quad":
+        return Quad()
+    else:
+        raise ValueError(f"nonlinearity {actfunc_string} appears to not implemented so far!")
 
 class FCNet: 
     def __init__(self, 
@@ -42,43 +66,41 @@ class FCNet:
                  N1 : int, #number of hidden layer units
                  L : int, #number of hidden layers. depth = L+1
                  bias : bool = False, #if True, add bias for each layer
-                 act : str = "erf" #activation function
+                 act : str = "erf", #activation function
+                 gamma : float = 1.0 # feature learning parameter, for MF use sqrt(N1) and for SP use 1.0
+                                     # Note: Biases are not affected by gamma here. Recheck if this is desired (no biases in Yang'22 or most other MF papers). 
                  ):
-        self.N0, self.N1, self.L, self.act, self.bias = N0, N1, L, act, bias 
+        self.N0, self.N1, self.L, self.act, self.bias, self.gamma = N0, N1, L, act, bias, gamma
 
     def Sequential(self):
-        if self.act == "relu":
-            act = nn.ReLU()
-        elif self.act == "erf":
-            act = Erf()
-        elif self.act == "id":
-            act = Id()
-        elif self.act == "quad":
-            act = Quad()
         modules = []
+        # build input layer
         first_layer = nn.Linear(self.N0, self.N1, bias=self.bias)
-        init.normal_(first_layer.weight, std = 1)
+        init.normal_(first_layer.weight, std = 1)   # todo: why not initialize from the prior std?
         if self.bias:
-            init.constant_(first_layer.bias,0)
-        modules.append(Norm(np.sqrt(self.N0)))
+            init.constant_(first_layer.bias,0)  # CK: why is bias init with constant_ here, but with normal_ an other layers? maybe harmonize this.
         modules.append(first_layer)
+        modules.append(Norm(np.sqrt(self.N0)))
+        # build intermediary layers
         for l in range(self.L-1): 
-            modules.append(act)
-            modules.append(Norm(np.sqrt(self.N1)))
+            modules.append(make_act_module(self.act))
             layer = nn.Linear(self.N1, self.N1, bias = self.bias)
             init.normal_(layer.weight, std = 1)
             if self.bias:
                 init.normal_(layer.bias,std = 1)
             modules.append(layer)
-        modules.append(act)
-        modules.append(Norm(np.sqrt(self.N1)))
+            modules.append(Norm(np.sqrt(self.N1)))
+        # build output layer
+        modules.append(make_act_module(self.act))
         last_layer = nn.Linear(self.N1, 1, bias=self.bias)  
         init.normal_(last_layer.weight, std = 1) 
         if self.bias:
                 init.normal_(last_layer.bias,std = 1)
         modules.append(last_layer)
+        modules.append(Norm(np.sqrt(self.N1) * self.gamma)) # amounts to 1/sqrt(N1) for SP and 1/N for full muP with gamma = sqrt(N1) 
         sequential = nn.Sequential(*modules)
-        print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function', sequential)
+        print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function and feature learning param gamma {self.gamma} \n', sequential)
+        # print(f'list of children: {list(sequential.children())} \n') ## silent nonlinearity module cloning bug could be seen here
         return sequential
     
 class ConvNet:

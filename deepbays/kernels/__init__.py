@@ -2,6 +2,7 @@ from .kernels import kernel_erf
 from .kernels import kernel_relu
 from .kernels import kernel_quadratic
 from .kernels import kernel_id
+from .kernels import kernel_square
 from .kernels import kernel_relu_bias
 from .kernels import mean_relu
 from .kernels import mean_quadratic
@@ -14,6 +15,7 @@ from .kernels_torch import kernel_erf_derivative_yy_torch
 from .kernels_torch import kernel_erf_derivative_xy_torch
 from .kernels_torch import kernel_id_torch
 from .kernels_torch import kernel_relu_torch
+from .kernels_torch import kernel_square_torch
 from .kernels_torch import computeKmatrixTorch
 from .kernels_torch import computeKmatrixMultipleCTorch
 #from .kernels_cuda import kernel_erf_cuda

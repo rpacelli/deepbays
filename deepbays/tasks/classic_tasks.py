@@ -58,17 +58,18 @@ def oneHotEncoding(y, verbose=True):
     return oneHotEncoded;
 
 class mnist_dataset: 
-    def __init__(self, N, selectedLabels, dataSeed = 1234): #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
+    def __init__(self, N, selectedLabels, dataSeed = 1234, dirpath='./data'): #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
         self.N = N
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels
         self.dataSeed = dataSeed
+        self.dirpath = dirpath
     def make_data(self, P, Ptest, batchSize = 60000, flatten = False):
         self.flatten = flatten
         transformDataset = getTransforms(self)
-        trainset = torchvision.datasets.MNIST(root = './data', train = True, download = True, transform = transformDataset)
+        trainset = torchvision.datasets.MNIST(root = self.dirpath, train = True, download = True, transform = transformDataset)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size = batchSize)
-        testset = torchvision.datasets.MNIST(root = './data', train = False, download = True, transform = transformDataset)
+        testset = torchvision.datasets.MNIST(root = self.dirpath, train = False, download = True, transform = transformDataset)
         testloader = torch.utils.data.DataLoader(testset, batch_size = 10000, num_workers = 0)
         # Filter train and test datasets
         data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.dataSeed)
@@ -78,17 +79,18 @@ class mnist_dataset:
  
 
 class cifar_dataset: 
-    def __init__(self, N, selectedLabels, dataSeed=123):
+    def __init__(self, N, selectedLabels, dataSeed=123, dirpath='./data'):
         self.N = N
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels
         self.dataSeed = dataSeed
+        self.dirpath = dirpath
     def make_data(self, P, Ptest, batchSize = 60000, flatten = False):
         self.flatten = flatten
         transformDataset = getTransforms(self)
-        trainset = torchvision.datasets.CIFAR10(root = './data', train = True, download = True, transform = transformDataset)
+        trainset = torchvision.datasets.CIFAR10(root = self.dirpath, train = True, download = True, transform = transformDataset)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size = batchSize, num_workers = 0)
-        testset = torchvision.datasets.CIFAR10(root = './data', train = False, download = True, transform = transformDataset)
+        testset = torchvision.datasets.CIFAR10(root = self.dirpath, train = False, download = True, transform = transformDataset)
         testloader = torch.utils.data.DataLoader(testset, batch_size = 10000, num_workers = 0)
         #all_data, targets = next(iter(trainloader))
         # Filter train and test datasets

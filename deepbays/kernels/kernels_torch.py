@@ -49,3 +49,14 @@ def divide2dImage(array, k):
 
 def kernel_id_torch(cxx, cxy, cyy):
     return cxy + 0*cxx + 0*cyy #it is necessary to multiply by 0 to compute derivatives wrt cxx cyy. 
+
+
+def kernel_square_torch(cxx, cxy, cyy):
+    ''' 
+    For quadratic activation function phi(x) = x**2 (e.g. in phase retrieval). 
+    The form is easy because 
+    <phi(x)phi(y)>_N(0,C) = <x x y y>_N(0,C) 
+                          = C_xx C_yy + 2 C_xy^2 
+    is the fourth central moment of a Gaussian, so given by Wick's (Isserlis) theorem.
+    '''
+    return cxx * cyy + 2 * torch.square(cxy)
