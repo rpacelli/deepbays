@@ -18,13 +18,15 @@ def filter_by_label(data_loader, labels, P, dataSeed):
     #zero_one_labels = [0 if x  ==  labels[0] else 1 for x in filtered_labels]
     return filtered_data, filtered_labels #  torch.tensor(zero_one_labels)
 
-def getTransforms(self):
+def getTransforms(self, grayscale=True):
         T = t.Compose([
             t.Resize(size = self.side_size), 
             t.ToTensor(), 
-            t.Grayscale(), 
+            # t.Grayscale(), 
             #t.Normalize((0.5),(0.24)),
         ])
+        if grayscale:
+            T = t.Compose([T, t.Grayscale()])
         if self.flatten:
             T = t.Compose([
                 T, 
@@ -64,9 +66,9 @@ class mnist_dataset:
         self.selectedLabels = selectedLabels
         self.dataSeed = dataSeed
         self.dirpath = dirpath
-    def make_data(self, P, Ptest, batchSize = 60000, flatten = False):
+    def make_data(self, P, Ptest, batchSize = 60000, flatten = False, normalize=True):
         self.flatten = flatten
-        transformDataset = getTransforms(self)
+        transformDataset = getTransforms(self, grayscale=False) # mnist is already grayscale
         trainset = torchvision.datasets.MNIST(root = self.dirpath, train = True, download = True, transform = transformDataset)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size = batchSize)
         testset = torchvision.datasets.MNIST(root = self.dirpath, train = False, download = True, transform = transformDataset)
@@ -74,7 +76,8 @@ class mnist_dataset:
         # Filter train and test datasets
         data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.dataSeed)
         testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, self.dataSeed)
-        data, testData  = normalizeDataset(data, testData)
+        if normalize:
+            data, testData  = normalizeDataset(data, testData)
         return data, labels.unsqueeze(1), testData, testLabels.unsqueeze(1)
  
 
@@ -85,7 +88,7 @@ class cifar_dataset:
         self.selectedLabels = selectedLabels
         self.dataSeed = dataSeed
         self.dirpath = dirpath
-    def make_data(self, P, Ptest, batchSize = 60000, flatten = False):
+    def make_data(self, P, Ptest, batchSize = 60000, flatten = False, normalize=True):
         self.flatten = flatten
         transformDataset = getTransforms(self)
         trainset = torchvision.datasets.CIFAR10(root = self.dirpath, train = True, download = True, transform = transformDataset)
@@ -96,5 +99,6 @@ class cifar_dataset:
         # Filter train and test datasets
         data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.dataSeed)
         testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, self.dataSeed)
-        data, testData  = normalizeDataset(data, testData)
+        if normalize:
+            data, testData  = normalizeDataset(data, testData)
         return data, labels.unsqueeze(1), testData, testLabels.unsqueeze(1)
