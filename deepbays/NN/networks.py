@@ -67,16 +67,22 @@ class FCNet:
                  L : int, #number of hidden layers. depth = L+1
                  bias : bool = False, #if True, add bias for each layer
                  act : str = "erf", #activation function
+                 precisions = None,  # list of layer-wise precisions if deviating from all 1. 
                  gamma : float = 1.0 # feature learning parameter, for MF use sqrt(N1) and for SP use 1.0
                                      # Note: Biases are not affected by gamma here. Recheck if this is desired (no biases in Yang'22 or most other MF papers). 
                  ):
-        self.N0, self.N1, self.L, self.act, self.bias, self.gamma = N0, N1, L, act, bias, gamma
-
+        self.N0, self.N1, self.L, self.act, self.bias, self.precisions, self.gamma = N0, N1, L, act, bias, precisions, gamma
+        if precisions is not None:
+            assert len(precisions) == L+1, "Precisions must be a list of one precision value per layer"
+        else:
+            self.precisions = [1.] * (L+1) 
+            
+        
     def Sequential(self):
         modules = []
         # build input layer
         first_layer = nn.Linear(self.N0, self.N1, bias=self.bias)
-        init.normal_(first_layer.weight, std = 1)   # todo: why not initialize from the prior std?
+        init.normal_(first_layer.weight, std = 1. / np.sqrt(self.precisions[0]) )
         if self.bias:
             init.constant_(first_layer.bias,0)  # CK: why is bias init with constant_ here, but with normal_ an other layers? maybe harmonize this.
         modules.append(first_layer)
@@ -85,7 +91,7 @@ class FCNet:
         for l in range(self.L-1): 
             modules.append(make_act_module(self.act))
             layer = nn.Linear(self.N1, self.N1, bias = self.bias)
-            init.normal_(layer.weight, std = 1)
+            init.normal_(layer.weight, std = 1. / np.sqrt(self.precisions[l+1]) )
             if self.bias:
                 init.normal_(layer.bias,std = 1)
             modules.append(layer)
@@ -93,14 +99,13 @@ class FCNet:
         # build output layer
         modules.append(make_act_module(self.act))
         last_layer = nn.Linear(self.N1, 1, bias=self.bias)  
-        init.normal_(last_layer.weight, std = 1) 
+        init.normal_(last_layer.weight, std = 1. / np.sqrt(self.precisions[-1]) ) 
         if self.bias:
                 init.normal_(last_layer.bias,std = 1)
         modules.append(last_layer)
         modules.append(Norm(np.sqrt(self.N1) * self.gamma)) # amounts to 1/sqrt(N1) for SP and 1/N for full muP with gamma = sqrt(N1) 
         sequential = nn.Sequential(*modules)
         print(f'\nThe network has {self.L} dense hidden layer(s) of size {self.N1} with {self.act} actviation function and feature learning param gamma {self.gamma} \n', sequential)
-        # print(f'list of children: {list(sequential.children())} \n') ## silent nonlinearity module cloning bug could be seen here
         return sequential
     
 class ConvNet:
