@@ -200,28 +200,43 @@ class pokerhand_dataset:
 
     
 class LiSompo_template_dataset:
-    def __init__(self, N0, gamma, sigma0, sigmaw, dataSeed = 1234):
-        ''' For description, see Li, Sompolinsky, PRX 2021, Appendix E: Template model.'''
+    def __init__(self, N0=200, gamma=0.05, sigma0=0.1, sigmaw=0.3, dataSeed = 1234, randomclusterlabels=False, clusters='normal'):
+        ''' For description, see Li, Sompolinsky, PRX 2021, Appendix E: Template model. Default params (up to seed) chosen as in their Fig.15'''
         self.N0 = N0
         self.gamma = gamma
         self.sigma0 = sigma0
         self.sigmaw = sigmaw
         self.seed = dataSeed
+        self.randomlabels = randomclusterlabels
+        self.clusters = clusters
     
     def make_data(self, P, Pt):
         rng = np.random.RandomState(self.seed)  
         # Generate a random normalized teacher weight vector (w)
         w = self.sigmaw * rng.randn(self.N0)
         # Create training data (the template vectors). 
-        # Note: the paper does not state how exactly the templates are drawn, need to assume normal here
-        X = rng.randn(P, self.N0)
-        Y = np.dot(X, w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(P)
-        Y = torch.Tensor(Y.reshape(P,1))  #equivalent to unsqueeze
+        if self.clusters == 'hypercube':
+            X = rng.choice([-1., 1.], size=(P, self.N0))
+        elif self.clusters == 'normal':
+            # Note: the paper does not state how exactly the templates are drawn, need to assume normal here
+            X = rng.randn(P, self.N0)
+        else:
+            raise ValueError(f'clusters keyword {self.clusters} not fitting any implemented option.')
+        if self.randomlabels:
+            Ynp = rng.choice([-1., 1.], size=P)
+        else:
+            Ynp = np.dot(X, w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(P)
+        Y = torch.Tensor(Ynp.reshape(P,1))  #equivalent to unsqueeze
         X = torch.Tensor(X)
         # Create test data: here the samples x are corrupted by noise (=clusters around template locations)
         idx = rng.choice(np.arange(P, dtype=int), size=Pt) # First, randomly select the Pt indices of the template vectors
         Xtest = np.sqrt(1 - self.gamma) * X.numpy()[idx]  + np.sqrt(self.gamma) * rng.randn(Pt,self.N0) # first in numpy for consistency with other class defs
-        Ytest = (np.dot(Xtest, w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(Pt)).reshape(Pt,1)
+        if self.randomlabels:
+            Ytest = Ynp[idx].reshape(Pt,1) # choose label according to cluster
+        else:
+            Ytest = (np.dot(Xtest, w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(Pt)).reshape(Pt,1)
+            # Ytest = (np.dot(X[idx], w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(Pt)).reshape(Pt,1)
+            # Ytest = Ynp[idx].reshape(Pt,1)
         Xtest = torch.Tensor(Xtest)
         Ytest = torch.Tensor(Ytest)
         return X, Y, Xtest, Ytest
