@@ -42,12 +42,16 @@ def make_closure(model, data, targets, criterion, grads=True):
 
 def train_MALA(model, X, y, criterion, optimizer):
     closure = make_closure(model, X, y, criterion, grads=True)
-    accepted, log_alpha, loss = optimizer.step(closure)
+    accepted = False
+    while not accepted: # to guarantee that each call to train_MALA corresponds to one accepted new sample. 
+        accepted, log_alpha, loss = optimizer.step(closure)
     return loss
 
 def train_pCN(model, X, y, criterion, optimizer):
     closure = make_closure(model, X, y, criterion, grads=False)
-    accepted, log_alpha, loss = optimizer.step(closure)
+    accepted = False
+    while not accepted: # to guarantee that each call to train_pCN corresponds to one accepted new sample. 
+        accepted, log_alpha, loss = optimizer.step(closure)
     return loss
 
 
@@ -106,6 +110,7 @@ class MALAOpt(torch.optim.Optimizer):
 
         assert len(priors) == len(self.param_groups), "priors length must match param groups"
         for g, lam in zip(self.param_groups, priors):
+            assert lam > 0. , f"encountered flat (or even negative) prior precision {lam}"
             g["lambda"] = float(lam)
 
         if preconditioners is None:
@@ -264,6 +269,11 @@ class pCNOpt(torch.optim.Optimizer):
     """
     Preconditioned Crank–Nicolson proposals for Gaussian priors (precision lambda_j per group).
     Proposal preserves the prior exactly; MH ratio depends only on the (tempered) likelihood.
+    The main advantage of pCN is that the accept rate does not deteriorate trivially with dimension (which is the case for MALA).
+    This is because the proposals always remain on the shell of the prior norm, instead of tending away from the shell.
+    The proposals of this sampler are not gradient based, and only diffuse through MH acceptance steps.
+    Because of this, acceptance rates (and thus the optimal step size beta) very strongly deteriorate for low temperature, 
+    but the sampler is robust and efficient at moderate temperatures, even in high dimensions.
 
     theta' = sqrt(1 - beta^2) * theta + beta * Lambda^{-1/2} * xi,  xi ~ N(0, I)
 
@@ -301,6 +311,7 @@ class pCNOpt(torch.optim.Optimizer):
 
         assert len(priors) == len(self.param_groups), "priors length must match param groups"
         for g, lam in zip(self.param_groups, priors):
+            assert lam > 0. , f"encountered flat (or even negative) prior precision {lam}, not allowed for pCN"
             g["lambda"] = float(lam)
 
         # self._gen = generator if generator is not None else torch.Generator(device=next(_iter_params(self.param_groups)).device)
@@ -328,7 +339,7 @@ class pCNOpt(torch.optim.Optimizer):
         proposed_params = []
         for g in self.param_groups:
             lam = g["lambda"]
-            inv_sqrt_lam = 1.0 / math.sqrt(lam) if lam > 0 else 0.0  # if lam==0, prior is flat -> behaves like random walk
+            inv_sqrt_lam = 1.0 / math.sqrt(lam) # requirement lam > 0 already checked at init. if lam==0, prior is flat and pCN proposal would explode
             for p in g["params"]:
                 eps = torch.randn_like(p)#, generator=self._gen)
                 prop = root * p + beta * inv_sqrt_lam * eps
