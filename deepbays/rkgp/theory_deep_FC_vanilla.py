@@ -11,6 +11,10 @@ class FC_deep_vanilla():
                  priors : list = [1.0, 1.0], 
                  act    : str = "erf"):
         self.N1, self.T, self.L, self.l0, self.l1 = N1, T, L, priors[0],priors[1:] 
+        if (len(self.l1) == 1) and (self.L > 1): # catch case where priors where not specified for deeper L
+            self.l1 = self.l1 * self.L  # extend from length 1 list to one of length L-1 with same priors
+        else:
+            assert len(self.l1) == self.L , f"priors {priors} didn't match depth L={self.L}: need len(priors) = L + 1"
         self.kernelTorch = eval(f"kernels.kernel_{act}_torch")
         self.kernel = eval(f"kernels.kernel_{act}")
         
@@ -33,44 +37,6 @@ class FC_deep_vanilla():
         f.backward()
         return Q.grad.data.detach().numpy()
 
-    def LogLogEffective1DAction(self, logQscalar, offset=0.): 
-        """
-        Exploit that Qs are all equal due to symmetry. 
-        Working with logQ makes big brentq brackets fast and is fine because Q < 0 not physical.
-        If effective action should be negative, log-action may be NaN; a positive offset kwarg can be used to shift action upwards.
-        """
-        return torch.log(offset + self.effectiveAction(torch.exp(logQscalar).broadcast_to(self.L)))
-    
-    def LogLogEff1DActionPrime(self, logQ:float, offset=0.): # First derivative of loglog action, very benign for finding root logQstar.
-        logQ = torch.tensor(logQ, dtype = torch.float64, requires_grad = True)
-        g = torch.autograd.grad(self.LogLogEffective1DAction(logQ, offset=offset), logQ)[0]
-        return g.item()
-    
-    # def LogLogEff1DActionPrime(self, logQ:float, offset=0.): # previous, equivalent impl
-    #     logQ = torch.tensor(logQ, dtype = torch.float64, requires_grad = True)
-    #     g = self.LogLogEffective1DAction(logQ, offset=offset)
-    #     g.backward()
-    #     return logQ.grad.detach().item()
-
-    def optimize_LogLog(self, logQmin=-4., logQmax=7.): # fast and stable also for muP.
-        """ 
-        Find saddlepoint of effective action in log-log space using brentq bracket.
-        Uses scalar Q, since N1 is the same across hidden layers and action is symm wrt. Qs.
-        Notes: 
-            - Lims are natural log -> defaults are exp(-4) = 0.018, and exp(7) = 1096 
-            - Checks for negative eff. action at Q = 1, which may happen if Qstar close to 1, and attempts to shift log accordingly to avoid nan.
-              If this should fail (not observed so far), fall back to standard optimize() without logs.
-        """
-        neg_offset = self.effectiveAction(torch.ones(self.L)).item()
-        if neg_offset <= 0.: 
-            offset = -2. * neg_offset # eff. action is negative close to Q=1, need global positive offset to make log action well defined. 
-        else:
-            offset = 0.
-        logQstar = brentq(self.LogLogEff1DActionPrime, logQmin, logQmax, args=(offset,))
-        self.optQ = np.exp(logQstar) * np.ones(self.L)
-        isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) # tests additionally for smallness of grads, not only closeness to true root
-        self.converged = isClose.all()
-
     def optimize(self, Q0 = 1.):
         if isinstance(Q0, float):
             Q0 = Q0 * np.ones(self.L)
@@ -80,12 +46,39 @@ class FC_deep_vanilla():
         #print("\nis exact solution close to zero?", isClose)   
         #print(f"{self.L} hidden layer optQ is {self.optQ}")
 
-    def optimize_smart(self, logQmin=-4., logQmax=7., showdebugplots=True):
-        """ Tries log-log optimizer first, if it fails finds approx minimum by line search and initializes optimize there. Add more bells and whistles here if need arises."""
+    def ArcsinhLogEffective1DAction(self, logQscalar): 
+        """
+        Exploit that Qs are all equal due to symmetry. 
+        Working with logQ makes big brentq brackets fast and is fine because Q < 0 not physical.
+        Working with arcsinh(action) does the same compression for the action value: 
+            -> but using arcsinh as a graceful extension of log to the negative domain here because the action can be negative.
+        """
+        return torch.arcsinh(self.effectiveAction(torch.exp(logQscalar).broadcast_to(self.L)))
+    
+    def ArcsinhLogEff1DActionPrime(self, logQ:float): # First derivative of arcsinhlog action, very benign for finding root logQstar.
+        logQ = torch.tensor(logQ, dtype = torch.float64, requires_grad = True)
+        g = torch.autograd.grad(self.ArcsinhLogEffective1DAction(logQ), logQ)[0]
+        return g.item()
+
+    def optimize_ArcsinhLog(self, Qmin=1e-2, Qmax=1e3): # fast and stable also for muP.
+        """ 
+        Find saddlepoint of effective action in arcsinh-log space using brentq bracket.
+        Uses scalar Q, since N1 is the same across hidden layers and action is symm wrt. Qs.
+        Notes: 
+            - Uses arcsinh(action) to avoid nans one can encounter in log(action)
+            - If this should fail (not observed so far), fall back to standard optimize() without logs.
+        """
+        logQstar = brentq(self.ArcsinhLogEff1DActionPrime, np.log(Qmin), np.log(Qmax))
+        self.optQ = np.exp(logQstar) * np.ones(self.L)
+        isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) # tests additionally for smallness of grads, not only closeness to true root
+        self.converged = isClose.all()
+
+    def optimize_smart(self, Qmin=1e-2, Qmax=1e3, showdebugplots=True):
+        """ Tries arcsinh-log optimizer first, if it fails finds approx minimum by line search and initializes optimize there. Add more bells and whistles here if need arises."""
         try:
-            self.optimize_LogLog( logQmin=logQmin, logQmax=logQmax)
+            self.optimize_ArcsinhLog(Qmin=Qmin, Qmax=Qmax)
         except:
-            print(f'brentq with logQ brackets a={logQmin} g(a)={self.LogLogEff1DActionPrime(logQmin)}, b={logQmax} g(b)={self.LogLogEff1DActionPrime(logQmax)} failed. ')
+            print(f'brentq with logQ brackets a={np.log(Qmin)} g(a)={self.ArcsinhLogEff1DActionPrime(np.log(Qmin))}, b={np.log(Qmax)} g(b)={self.ArcsinhLogEff1DActionPrime(np.log(Qmax))} failed. ')
             self.converged = False
         if not self.converged:
             print('Plotting action to aid problem diagnosis and finding local init from plot values...')
@@ -97,17 +90,18 @@ class FC_deep_vanilla():
     def debug_action(self, Qminexp=-2., Qmaxexp=4., show=True):
         Qs = np.logspace(Qminexp, Qmaxexp, num=40)
         t_ones = torch.ones(self.L, dtype = torch.float64, requires_grad=False)
-        logaction_vals =  [np.log(self.effectiveAction(Q*t_ones).item()) for Q in Qs]
+        action_vals =  [self.effectiveAction(Q*t_ones).item() for Q in Qs]
         # loglogaction_vals =  [self.LogLogEffective1DAction(np.log10(Q)*t_ones).item() for Q in Qs]
         # loglogactionprime_vals =  [self.LogLogEff1DActionPrime(np.log10(Q)) for Q in Qs]
         if show:
             import matplotlib.pyplot as plt
             dfig, dax = plt.subplots() 
-            dax.plot(Qs, logaction_vals)
+            dax.plot(Qs, action_vals)
             # dax.plot(Qs, loglogaction_vals, linestyle='dashed')
             # dax.plot(Qs, loglogactionprime_vals, linestyle='dotted')
             dax.set_xscale('log')
-        Qinit_new = Qs[np.argmin(logaction_vals)]
+            dax.set_yscale('asinh')
+        Qinit_new = Qs[np.argmin(action_vals)]
         return Qinit_new
 
     def setIW(self):
