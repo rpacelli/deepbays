@@ -238,7 +238,13 @@ class MALAOpt(torch.optim.Optimizer):
         log_alpha = (logpi_prop - logpi_cur) + (logq_cur_given_prop - logq_prop_given_cur)
 
         self.stats.tried += 1
-        accept = (math.log(torch.rand(()).item()) < log_alpha) #, generator=self._gen
+        if not math.isfinite(log_alpha):                    # guard rail
+            accept = False
+        elif log_alpha >= 0. :                              # accept without thinking
+            accept = True
+        else:
+            accept = (torch.rand(()).item() < math.exp(log_alpha))   # decide stochastically based on MH
+        # accept = (math.log(torch.rand(()).item()) < log_alpha) # since torch.rand() can give 0.0 and produce error in math.log, this is unstable
 
         if accept:
             self.stats.accepted += 1
@@ -354,10 +360,16 @@ class pCNOpt(torch.optim.Optimizer):
         with torch.inference_mode():
             Lp = float(closure().detach())
 
-        # MH ratio (tempered)
+        # accept/reject based on MH ratio (tempered) log_alpha
         log_alpha = -(Lp - Lc) / T
         self.stats.tried += 1
-        accept = (math.log(torch.rand(()).item()) < log_alpha) and math.isfinite(log_alpha)  #, generator=self._gen
+        if not math.isfinite(log_alpha):                    # guard rail
+            accept = False
+        elif log_alpha >= 0. :                              # accept without thinking
+            accept = True
+        else:
+            accept = (torch.rand(()).item() < math.exp(log_alpha))   # decide stochastically based on MH
+        # accept = (math.log(torch.rand(()).item()) < log_alpha) and math.isfinite(log_alpha)  # torch.rand can give exactly 0.0, then math.log() throws error -> not long term stable
 
         if accept:
             self.stats.accepted += 1
