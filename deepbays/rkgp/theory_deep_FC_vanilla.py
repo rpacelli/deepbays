@@ -87,7 +87,7 @@ class FC_deep_vanilla():
             if not self.converged:
                 print('... did not work - needs manual help or debugging.')
     
-    def debug_action(self, Qminexp=-2., Qmaxexp=4., show=True):
+    def debug_action(self, Qminexp=-3., Qmaxexp=4., show=True):
         Qs = np.logspace(Qminexp, Qmaxexp, num=40)
         t_ones = torch.ones(self.L, dtype = torch.float64, requires_grad=False)
         action_vals =  [self.effectiveAction(Q*t_ones).item() for Q in Qs]
@@ -101,6 +101,7 @@ class FC_deep_vanilla():
             # dax.plot(Qs, loglogactionprime_vals, linestyle='dotted')
             dax.set_xscale('log')
             dax.set_yscale('asinh')
+            plt.show()
         Qinit_new = Qs[np.argmin(action_vals)]
         return Qinit_new
 

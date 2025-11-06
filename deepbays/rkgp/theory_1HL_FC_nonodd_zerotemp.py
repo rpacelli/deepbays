@@ -1,6 +1,7 @@
 import numpy as np
 from .. import kernels
 import torch
+from scipy.optimize import fsolve
 from tqdm import tqdm
 
 class FC_1HL_nonodd_nonzerotemp():
@@ -38,19 +39,13 @@ class FC_1HL_nonodd_nonzerotemp():
         self.corrNorm = 1/(self.N0 * self.priors[0])
         self.C = np.dot(X, X.T) * self.corrNorm
         self.y = Y.squeeze().to(torch.float32).to(self.device)
-        # self.y.requires_grad = False
+        self.y.requires_grad = False
 
         # precompute raw kernel and [mu, y]^T stack on gpu, for calls to torch.linalg.solve() 
         self.theta = torch.tensor(self.kernel(self.C.diagonal()[:, None], self.C, self.C.diagonal()[None, :]), device=self.device)
         self.mu = torch.tensor(self.mean(self.C.diagonal()), device=self.device)
         self.muy = torch.stack([self.mu, self.y], axis=1) # shape (P, 2)
-        
-        # Tmu, Ty = torch.linalg.solve(regtheta, muy).T.to('cpu') # gives e.g. Tmu = inverse(regtheta) @ mu
-        # # precompute scalars in action
-        # self.muTmu = 1./self.P * np.dot(self.mu, Tmu)
-        # self.muTy  = 1./self.P * np.dot(self.mu, Ty)
-        # self.yTy   = 1./self.P * np.dot(self.y, Ty) 
-        # self.logdettheta = torch.logdet(regtheta).to('cpu').item()
+
         
     def K(self, Q):
         return self.T * torch.eye(self.P, device=self.device) + Q[0] * self.theta / self.priors[1]
@@ -95,8 +90,26 @@ class FC_1HL_nonodd_nonzerotemp():
                 + self.term3(Q, Kinv_mu)
                 + self.term4(Q, Kinv_mu)
                 )
+
+    def computeActionGrad(self, Q):
+        Q = torch.tensor(Q, dtype = torch.float32, device=self.device, requires_grad = True)
+        f = self.effectiveAction(Q)
+        f.backward()
+        return Q.grad.data.detach().to('cpu').numpy()
+    
+    def optimize(self, Q0 = [1., 0.], verbose=False):
+        """ Uses scipy.optimize.fsolve, in most cases this is much faster than ADAM."""
+        assert len(Q0) == 2
+        self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-8)
+        resgrads = self.computeActionGrad(self.optQ)
+        isClose = np.isclose(resgrads, np.zeros(2), rtol=1e-4, atol=1e-6) # tests additionally for smallness of grads, not only closeness to true root
+        self.converged = isClose.all()
+        if verbose:
+            print(f"is fsolve solution close to zero? {isClose}, {resgrads}")   
+            print(f"fsolve optQ is {self.optQ}")
         
     def optimize_adam(self, Q0=None, lr=0.02, tolerance=1e-4, max_epochs=20000, verbose=True):
+        """ Finds saddlepoint by minimizing ||dS/dQ||^2 with ADAM. Robust fall-back option, usually optimize() is faster (less function calls) """
         if Q0 is not None:
             assert len(Q0) == 2, "Q0 init should e.g. be [1., 0.]"
         else:
@@ -136,22 +149,6 @@ class FC_1HL_nonodd_nonzerotemp():
         if verbose:
             print(f"Qs: [{self.optQ[0]:.3f}, {self.optQ[1]:.3f}], opt state: {self.optState}, epochs: {self.optEpochs}, Qbar - 1/(1+Q): {self.diffQ(self.optQ):.3f}")
 
-    def computeActionGrad(self, Q):
-        Q = torch.tensor(Q, dtype = torch.float64, device=self.device, requires_grad = True)
-        f = self.effectiveAction(Q)
-        f.backward()
-        return Q.grad.data.detach().to('cpu').numpy()
-    
-    def optimize(self, Q0 = [1., 0.]):
-        from scipy.optimize import fsolve
-        assert len(Q0) == 2
-        self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-9)
-        resgrads = self.computeActionGrad(self.optQ)
-        isClose = np.isclose(resgrads, np.zeros(2), rtol=1e-4, atol=1e-7) # tests additionally for smallness of grads, not only closeness to true root
-        self.converged = isClose.all()
-        print(f"is fsolve solution close to zero? {isClose}, {resgrads}")   
-        print(f"fsolve optQ is {self.optQ}")
-
     def computeFullTrainTestKernel(self, X, Xtest):
         Xtt = torch.concat([X, Xtest], axis=0)
         Ctt = np.dot(Xtt, Xtt.T) * self.corrNorm
@@ -161,6 +158,28 @@ class FC_1HL_nonodd_nonzerotemp():
         self.Mtt = np.outer(self.mutt, self.mutt)
         self.rKtt = (self.optQ[0] / self.priors[1] * self.thetatt  # self.T * np.eye(len(self.thetatt)) + 
                      - self.diffQ(self.optQ) / self.priors[1] * self.Mtt)
+
+    def predict(self, Xtest, tsolve=False):
+        self.Ptest = len(Xtest)
+        P = self.P
+        Pt = self.Ptest
+        self.computeFullTrainTestKernel(self.X, Xtest)  # compute rKtt
+        if tsolve:   
+            A = torch.tensor(self.T * np.eye(self.P, dtype=np.float32) + self.rKtt[:P, :P], dtype=torch.float32, device=self.device)
+            self.K0_invK = torch.linalg.solve(A, torch.tensor(self.rKtt[-Pt:, :P].T, device=self.device)).T.to('cpu').numpy()
+        else:
+            self.invK = np.linalg.inv(self.T * np.eye(self.P) + self.rKtt[:P, :P])
+            self.K0_invK = np.matmul(self.rKtt[-Pt:, :P], self.invK)
+        self.Ypred = np.dot(self.K0_invK, self.Y).reshape(-1, 1)
+        return self.Ypred
+
+    def averageLoss(self, Ytest):
+        bias = Ytest - self.Ypred
+        var = self.rKtt.diagonal()[-self.Ptest:] - \
+            np.sum(self.K0_invK * self.rKtt[-self.Ptest:, :self.P], axis=1)
+        predLoss = bias**2 + var
+        return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
+
         
     def debug_plot(self, low=[0.1, -0.5], high=[8., 8.], n=50, grads=True):
         Qbars = np.linspace(low[0], high[0], num=n)
@@ -193,29 +212,6 @@ class FC_1HL_nonodd_nonzerotemp():
             plt.xlabel('Qbar')
             plt.show()
 
-    def predict(self, Xtest, tsolve=False):
-        self.Ptest = len(Xtest)
-        P = self.P
-        Pt = self.Ptest
-        self.computeFullTrainTestKernel(self.X, Xtest)  # compute rKtt
-        if tsolve:   
-            A = torch.tensor(self.T * np.eye(self.P) + self.rKtt[:P, :P], dtype=torch.float32, device=self.device)
-            self.K0_invK = torch.linalg.solve(A, torch.tensor(self.rKtt[-Pt:, :P].T, device=self.device)).T.to('cpu').numpy()
-        else:
-            self.invK = np.linalg.inv(self.T * np.eye(self.P) + self.rKtt[:P, :P])
-            self.K0_invK = np.matmul(self.rKtt[-Pt:, :P], self.invK)
-        self.Ypred = np.dot(self.K0_invK, self.Y).reshape(-1, 1)
-        return self.Ypred
-
-    def averageLoss(self, Ytest):
-        bias = Ytest - self.Ypred
-        var = self.rKtt.diagonal()[-self.Ptest:] - \
-            np.sum(self.K0_invK * self.rKtt[-self.Ptest:, :self.P], axis=1)
-        predLoss = bias**2 + var
-        return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
-
-
-
 
 class FC_1HL_nonodd_zerotemp():
     """ 
@@ -227,6 +223,14 @@ class FC_1HL_nonodd_zerotemp():
     where all matrix operations needed do not depend on Q, Qbar and therefore only need to be performed 
     a single time during preprocess() -> Computing the action and derivatives during optimization
     iterations only involves scalars and is much cheaper (i.e. no PxP matrix inversion per iteration).
+    
+    Notes:
+        - Here, regularization (default 1e-8) acts as a pseudo-temperature 
+          to avoid issues with singular kernels. It is possible to "emulate" the
+          nonzero temperature result by setting regularization = T * prior[1] / optQ[0].
+          However, since optQ (itself a function of T) is not known beforehand, this can
+          only be done approximately, 
+          for example init with regularization = T * prior[1], if it is known that optQ[0] \approx 1.
              
     """
     def __init__(self, N1, priors=1., act="relu", regularization=1e-8, device='cuda'):
@@ -252,12 +256,12 @@ class FC_1HL_nonodd_zerotemp():
         self.alpha = self.P / self.N1
         self.corrNorm = 1/(self.N0 * self.priors[0])
         self.C = np.dot(X, X.T) * self.corrNorm
-        self.y = Y.squeeze().to(torch.float64).numpy()
+        self.y = Y.squeeze().to(torch.float32).numpy()
         # self.y.requires_grad = False
 
         # precompute raw kernel and mean vector, and inverse kernel with torch
         self.theta = self.kernel(self.C.diagonal()[:, None], self.C, self.C.diagonal()[None, :])
-        regtheta = torch.tensor(self.theta + self.reg * np.eye(self.P), device=self.device)
+        regtheta = torch.tensor(self.theta + self.reg * np.eye(self.P, dtype=np.float32), device=self.device)
         self.mu = self.mean(self.C.diagonal())
         if tsolve:
             muy = torch.tensor(np.stack([self.mu, self.y], axis=1), device=self.device) # shape (P, 2)
@@ -284,7 +288,7 @@ class FC_1HL_nonodd_zerotemp():
         return self.alpha * self.priors[1] * self.yTy / Q[0]
     
     def term3(self, Q):
-        return self.alpha * torch.log(1. - self.diffQ(Q) / Q[0] * self.P * self.muTmu)
+        return self.alpha / self.P * torch.log(1. - self.diffQ(Q) / Q[0] * self.P * self.muTmu)
     
     def term4(self, Q):
         return self.alpha * self.priors[1] * (self.diffQ(Q) / Q[0]) / (Q[0] - self.diffQ(Q) * self.P * self.muTmu) * self.P * self.muTy**2
@@ -297,8 +301,7 @@ class FC_1HL_nonodd_zerotemp():
         """
         return (- Q[0] * Q[1]
                 + torch.log(1. + Q[1])
-                + self.alpha * self.logdettheta / self.P
-                + self.term1(Q)
+                + self.term1(Q) + self.alpha * self.logdettheta / self.P
                 + self.term2(Q)
                 + self.term3(Q)
                 + self.term4(Q)
@@ -339,25 +342,27 @@ class FC_1HL_nonodd_zerotemp():
                 break
 
         self.optQ = Q.detach().numpy()
-        print(f"Opt  t1: {self.term1(Q):.3f}, t2: {self.term2(Q):.3f}, t3: {self.term3(Q):.3f}, t4: {self.term4(Q):.3f}")
+        # print(f"Opt  t1: {self.term1(Q):.3f}, t2: {self.term2(Q):.3f}, t3: {self.term3(Q):.3f}, t4: {self.term4(Q):.3f}")
         
         if verbose:
             print(f"Qs: [{self.optQ[0]:.3f}, {self.optQ[1]:.3f}], opt state: {self.optState}, epochs: {self.optEpochs}, Qbar - 1/(1+Q): {self.diffQ(self.optQ):.3f}")
 
     def computeActionGrad(self, Q):
-        Q = torch.tensor(Q, dtype = torch.float64, requires_grad = True)
+        Q = torch.tensor(Q, dtype = torch.float32, requires_grad = True)
         f = self.effectiveAction(Q)
         f.backward()
         return Q.grad.data.detach().numpy()
     
-    def optimize(self, Q0 = [1., 0.]):
+    def optimize(self, Q0 = [1., 0.], verbose=False):
         from scipy.optimize import fsolve
         assert len(Q0) == 2
-        self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-8)
-        isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(2)) # tests additionally for smallness of grads, not only closeness to true root
+        self.optQ = fsolve(self.computeActionGrad, Q0, xtol = 1e-8) # in case of convergence issues, using maxfev=2000 empirically didnt help much
+        resgrads = self.computeActionGrad(self.optQ)
+        isClose = np.isclose(resgrads, np.zeros(2), rtol=1e-4, atol=1e-6) # tests additionally for smallness of grads, not only closeness to true root
         self.converged = isClose.all()
-        print("is fsolve solution close to zero?", isClose)   
-        print(f"fsolve optQ is {self.optQ}")
+        if verbose:
+            print("is fsolve solution close to zero?", isClose, resgrads)   
+            print(f"fsolve optQ is {self.optQ}")
 
     def computeFullTrainTestKernel(self, X, Xtest):
         Xtt = torch.concat([X, Xtest], axis=0)
@@ -389,7 +394,7 @@ class FC_1HL_nonodd_zerotemp():
             gradlossgrid = np.zeros_like(Sgrid)
             for i in range(n):
                 for j in range(n):
-                    gradlossgrid[i,j] = np.sum(self.computeActionGrad(Qgrid[:,i,j])**2) # seems not to work out of box as vectorized op
+                    gradlossgrid[i,j] = np.sum(self.computeActionGrad(Qgrid[:,i,j].numpy())**2) # seems not to work out of box as vectorized op
             arcsinhgradlossgrid = np.arcsinh(gradlossgrid)
             
             h2 = plt.contourf(Qbars, Qs, arcsinhgradlossgrid)
@@ -406,7 +411,7 @@ class FC_1HL_nonodd_zerotemp():
         Pt = self.Ptest
         self.computeFullTrainTestKernel(self.X, Xtest)  # compute rKtt
         if tsolve:   
-            A = torch.tensor(self.rKtt[:P, :P] + self.reg * np.eye(P), dtype=torch.float32, device=self.device)
+            A = torch.tensor(self.rKtt[:P, :P] + self.reg * np.eye(P, dtype=np.float32), dtype=torch.float32, device=self.device)
             self.K0_invK = torch.linalg.solve(A, torch.tensor(self.rKtt[-Pt:, :P].T, device=self.device)).T.to('cpu').numpy()
         else:
             A = self.rKtt[:P, :P] + (self.reg) * np.eye(P)
@@ -421,3 +426,46 @@ class FC_1HL_nonodd_zerotemp():
             np.sum(self.K0_invK * self.rKtt[-self.Ptest:, :self.P], axis=1)
         predLoss = bias**2 + var
         return predLoss.mean().item(), (bias**2).mean().item(), var.mean().item()
+
+
+# utility func
+def get_action_terms(tgp, Q, nonzerotemp=True):
+    """Convenience for analyzing the scaling of terms in the action.
+    Returns:
+        S(Q), [term1, term2, term3, term4], [mu_Kinv_mu, mu_Kinv_y, y_Kinv_y], [mu_mu, mu_y, y_y]  # (here mu_Kinv_mu, mu_y etc. are normalized by 1/P)
+    """
+    assert len(Q) == 2
+    if type(tgp) == FC_1HL_nonodd_nonzerotemp:
+        Q = torch.tensor(Q, device = tgp.device)
+        K, Kinv_mu, Kinv_y = tgp.get_K_Kinv_muy(Q)
+        S = tgp.effectiveAction(Q).item()
+        t1 = tgp.term1(K).item()
+        t2 = tgp.term2(Q, Kinv_y).item()
+        t3 = tgp.term3(Q, Kinv_mu).item()
+        t4 = tgp.term4(Q, Kinv_mu).item()
+        mu_Kinv_mu = (tgp.mu @ Kinv_mu / tgp.P).to('cpu').item()
+        mu_Kinv_y  = (tgp.mu @ Kinv_y / tgp.P).to('cpu').item()
+        y_Kinv_y   = (tgp.y @ Kinv_y / tgp.P).to('cpu').item()
+        mu_mu = (tgp.mu @ tgp.mu / tgp.P).item()
+        mu_y = (tgp.mu @ tgp.y / tgp.P).item()
+        y_y = (tgp.y @ tgp.y / tgp.P).item()
+    elif type(tgp) == FC_1HL_nonodd_zerotemp:
+        if not type(Q) == torch.Tensor:
+            Q = torch.tensor(Q)
+        S = tgp.effectiveAction(Q.to(tgp.device)).item()
+        t1 = (tgp.term1(Q) + tgp.alpha * tgp.logdettheta / tgp.P).item() # for comparison to nonzerotemp case
+        t2 = tgp.term2(Q).item()
+        t3 = tgp.term3(Q).item()
+        t4 = tgp.term4(Q).item()
+        mu_Kinv_mu = tgp.priors[1] / Q[0].item() * tgp.muTmu
+        mu_Kinv_y  = tgp.priors[1] / Q[0].item() * tgp.muTy
+        y_Kinv_y   = tgp.priors[1] / Q[0].item() * tgp.yTy
+        mu_mu = tgp.mu @ tgp.mu / tgp.P
+        mu_y = tgp.mu @ tgp.y / tgp.P
+        y_y = tgp.y @ tgp.y / tgp.P
+    else:
+        raise TypeError(f"Cannot retrieve action term for class {type(tgp)} (or not implemented).")
+    terms = [t1, t2, t3, t4]
+    contractions = [mu_Kinv_mu, mu_Kinv_y, y_Kinv_y]
+    overlaps = [mu_mu, mu_y, y_y]
+    return S, terms, contractions, overlaps

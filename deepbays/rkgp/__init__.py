@@ -1,7 +1,7 @@
 from .theory_1HL_FC_single_output import FC_1HL
 from .theory_1HL_FC_single_output_corrections import FC_1HL_corrected
 from .theory_1HL_FC_single_output_nonodd import FC_1HL_nonodd
-from .theory_1HL_FC_nonodd_zerotemp import FC_1HL_nonodd_zerotemp, FC_1HL_nonodd_nonzerotemp
+from .theory_1HL_FC_nonodd_zerotemp import FC_1HL_nonodd_zerotemp, FC_1HL_nonodd_nonzerotemp, get_action_terms
 #from .theory_1HL_FC_single_output_cuda import FC_1HL_cuda
 from .theory_1HL_FC_multiple_output import FC_1HL_multiclass
 from .theory_2HL_FC_single_output_nonodd import FC_2HL_nonodd
