@@ -42,16 +42,12 @@ def make_closure(model, data, targets, criterion, grads=True):
 
 def train_MALA(model, X, y, criterion, optimizer):
     closure = make_closure(model, X, y, criterion, grads=True)
-    accepted = False
-    while not accepted: # to guarantee that each call to train_MALA corresponds to one accepted new sample. 
-        accepted, log_alpha, loss = optimizer.step(closure)
+    accepted, log_alpha, loss = optimizer.step(closure)
     return loss
 
 def train_pCN(model, X, y, criterion, optimizer):
     closure = make_closure(model, X, y, criterion, grads=False)
-    accepted = False
-    while not accepted: # to guarantee that each call to train_pCN corresponds to one accepted new sample. 
-        accepted, log_alpha, loss = optimizer.step(closure)
+    accepted, log_alpha, loss = optimizer.step(closure)
     return loss
 
 
