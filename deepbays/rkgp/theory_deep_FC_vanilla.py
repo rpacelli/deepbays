@@ -81,11 +81,14 @@ class FC_deep_vanilla():
             print(f'brentq with logQ brackets a={np.log(Qmin)} g(a)={self.ArcsinhLogEff1DActionPrime(np.log(Qmin))}, b={np.log(Qmax)} g(b)={self.ArcsinhLogEff1DActionPrime(np.log(Qmax))} failed. ')
             self.converged = False
         if not self.converged:
-            print('Plotting action to aid problem diagnosis and finding local init from plot values...')
-            Q0new = self.debug_action(show=showdebugplots)
-            self.optimize(Q0new)
+            print('Trying with basic init at Q0 = 1 ...')
+            self.optimize(Q0 = 1.)
             if not self.converged:
-                print('... did not work - needs manual help or debugging.')
+                print('Plotting action to aid problem diagnosis and finding local init from plot values...')
+                Q0new = self.debug_action(show=showdebugplots)
+                self.optimize(Q0new)
+                if not self.converged:
+                    print(f'... init at {Q0new} did not work - needs manual help or debugging.')
     
     def debug_action(self, Qminexp=-3., Qmaxexp=4., show=True):
         Qs = np.logspace(Qminexp, Qmaxexp, num=40)
@@ -101,7 +104,9 @@ class FC_deep_vanilla():
             # dax.plot(Qs, loglogactionprime_vals, linestyle='dotted')
             dax.set_xscale('log')
             dax.set_yscale('asinh')
-            plt.show()
+            if len(plt.get_fignums()) == 1:
+                plt.show()
+            # plt.show()
         Qinit_new = Qs[np.argmin(action_vals)]
         return Qinit_new
 
