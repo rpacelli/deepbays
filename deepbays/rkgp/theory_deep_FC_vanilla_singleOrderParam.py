@@ -66,11 +66,16 @@ class FC_deep_vanilla_singleOrderParam():
         rKL = self.C
         rK0L = self.C0 
         rK0XL = self.C0X
+        self.NNGP_kernels = [np.random.randn(self.P, self.P) for _ in range(self.L+1)]
+        self.NNGP_kernels[0] = self.C
+
         for l in range(self.L):
             rKXL = rKL.diagonal() 
             rK0XL = (1. / self.l1[l]) * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
             rK0L = (1. / self.l1[l]) * self.kernel(rK0L, rK0L, rK0L)
             rKL = (1. / self.l1[l]) * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+            self.NNGP_kernels[l+1] = rKL
+        self.finalKNNGP = rKL
         for l in range(self.L):
             rKXL = self.optQ * rKXL
             rK0XL = self.optQ * rK0XL

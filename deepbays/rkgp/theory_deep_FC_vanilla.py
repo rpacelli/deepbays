@@ -70,6 +70,7 @@ class FC_deep_vanilla():
             rK0XL = (1. / self.l1[l]) * self.kernel(rK0L[:,None], rK0XL, rKXL[None, :])
             rK0L = (1. / self.l1[l]) * self.kernel(rK0L, rK0L, rK0L)
             rKL = (1. / self.l1[l]) * self.kernel(rKL.diagonal()[:,None], rKL, rKL.diagonal()[None,:])
+        self.finalKNNGP = rKL
         for l in range(self.L):
             rKXL = self.optQ[l] * rKXL
             rK0XL = self.optQ[l] * rK0XL
