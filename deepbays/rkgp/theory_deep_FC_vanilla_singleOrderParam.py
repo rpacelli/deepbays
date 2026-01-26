@@ -40,8 +40,6 @@ class FC_deep_vanilla_singleOrderParam():
         isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) 
         self.converged = isClose.all()
         self.S = self.effectiveAction(torch.tensor(self.optQ))
-        #print("\nis exact solution close to zero?", isClose)   
-        #print(f"{self.L} hidden layer optQ is {self.optQ}")
 
     def setIW(self):
         self.optQ = 1.
