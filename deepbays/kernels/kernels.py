@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import warnings
 from scipy.integrate import dblquad, quad
 from functools import partial
 import math
@@ -68,6 +69,8 @@ def kernel_tanh(cxx: float, cxy: float, cyy: float):
 
 def kernel_relu(cxx, cxy, cyy):
     u = cxy / np.sqrt(cxx * cyy)
+    #warnings.warn("clipping relu values, check carefully and remove this line while debugginging.")
+    #u = np.clip(u, -1.0 + 1e-12, 1.0 - 1e-12) 
     kappa = (1 / (2 * np.pi)) * (u * (np.pi - np.arccos(u)) + np.sqrt(1 - u**2))
     return np.sqrt(cxx * cyy) * kappa
 
@@ -105,3 +108,7 @@ def divide2dImage(array, k):
             chunk = array[i:i+k, j:j+k]
             chunks.append(chunk)
     return chunks
+
+def deriv_kernel_relu(cxx, cxy, cyy):
+    norm = np.sqrt(cxx * cyy)
+    return (np.pi - np.arccos(cxy/ norm)) / (2 * np.pi) 

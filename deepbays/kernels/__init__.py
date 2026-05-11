@@ -6,6 +6,7 @@ from .kernels import kernel_relu_bias
 from .kernels import mean_relu
 from .kernels import mean_quadratic
 from .kernels import computeKmatrix
+from .kernels import deriv_kernel_relu
 from .kernels_torch import divide2dImage
 from .kernels_torch import kernel_erf_torch
 from .kernels_torch import kernel_quadratic_torch
