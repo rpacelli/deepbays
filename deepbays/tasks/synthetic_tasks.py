@@ -61,3 +61,55 @@ class synthetic_1hl_dataset:
         
         return inputs, targets.unsqueeze(1), test_inputs, test_targets.unsqueeze(1)
     
+
+class random_binary_Ksparse_dataset:
+    """
+    Generate random binary data from Gaussian distribution.
+    
+    Data generation process:
+    1. Generate random numbers from N(0, 1)
+    2. Take sign to get -1/1 values
+    3. Labels are product of first K features: For K =4, the labels are Y = X[:,0] * X[:,1] * X[:,2] * X[:,3]
+    """
+    def __init__(self, N0, P, Ptest, K, seed):
+        self.N0 = N0 #number of features
+        self.P = P #number of training samples
+        self.Ptest = Ptest
+        self.seed = seed
+        self.K = K #number of feature used in the labels. For example, if K=4, the labels are the product of the first 4 features.
+    
+    def product_of_first_k_features(self, X, K):
+            """
+            Compute the product of the first K features for each sample.
+
+            Parameters:
+            X : numpy array of shape (n_samples, n_features)
+            K : integer, number of features to multiply
+
+            Returns:
+            Y : numpy array of shape (n_samples, 1)
+            """
+            # Take first K features and multiply along axis=1
+            Y = np.prod(X[:, :K], axis=1, keepdims=True)
+            return Y
+    
+    def make_data(self):
+        """Generate training and test data."""
+        # Set random seed for reproducibility
+        np.random.seed(self.seed)
+        
+        # Generate training data
+        X = np.random.normal(0, 1, size=(self.P, self.N0))
+        X = np.sign(X)
+        
+        # Generate test data
+        np.random.seed(self.seed + 1000)
+        Xtest = np.random.normal(0, 1, size=(self.Ptest, self.N0))
+        Xtest = np.sign(Xtest)
+
+        # Generate labels as product of first K features
+        Y = self.product_of_first_k_features(X, self.K)
+        Ytest = self.product_of_first_k_features(Xtest, self.K)
+
+        return X, Y, Xtest, Ytest
+    

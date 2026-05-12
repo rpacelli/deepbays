@@ -5,3 +5,4 @@ from .classic_tasks import mnist_dataset
 #from .extra_tasks import emnistABEL_CHJS
 from .synthetic_tasks import synthetic_1hl_dataset
 from .synthetic_tasks import linear_dataset
+from .synthetic_tasks import random_binary_Ksparse_dataset
