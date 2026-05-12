@@ -4,7 +4,6 @@ from scipy.optimize import fsolve
 from .. import kernels
 import torch
 
-
 ## MODIFIED VERSION WITH NEW FUNCTIONS IMPLEMENTED
 class FC_1HL_metric():
     def __init__(self, 
