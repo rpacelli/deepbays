@@ -3,26 +3,38 @@ import torch, torchvision, torchvision.transforms as t
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from ..NN import *
+from ..NN import FCNet
+
+#All classes return X, Y, Xtest, Ytest as numpy arrays. This is for compatibility with the kernel code, which is written in numpy.
+# X and Xtest are of shape (P, N0) and (Pt, N0) respectively. 
+# Y and Ytest are of shape (P, 1) and (Pt, 1) respectively. This is for compatibility with pytorch network models.
+# N0 is in the class init for consistency with classic_tasks
 
 class random_dataset: 
     def __init__(self, N0):
+        " This class generates random data with random labels"
+        "Parameters: N0: input dimension, "
         self.N0 = N0
 
-    def make_data(self, P, Pt):
-        inputs = torch.randn((P, self.N0))
-        targets = torch.randn(P)
-        test_inputs = torch.randn((Pt, self.N0))
-        test_targets = torch.randn(Pt)
-        return inputs, targets, test_inputs, test_targets
+    def make_data(self, P, Pt, dataSeed=1234):
+        "P: number of training samples, "
+        "Pt: number of test samples, "
+        "dataSeed: random seed for data generation"
+        rng = np.random.RandomState(dataSeed)
+        X = rng.randn((P, self.N0))
+        Y = rng.randn(P).reshape(P,1)
+        Xtest = rng.randn((Pt, self.N0))
+        Ytest = rng.randn(Pt).reshape(P,1)
+        return X,Y, Xtest, Ytest
+        #return torch.tensor(X, dtype=torch.float), torch.tensor(Y, dtype=torch.float), torch.tensor( Xtest, dtype=torch.float), torch.tensor(Ytest, dtype=torch.float)
+
     
 class linear_dataset:
-    def __init__(self, N0, dataSeed = 1234):
+    def __init__(self,N0):
         self.N0 = N0
-        self.seed = dataSeed
     
-    def make_data(self, P, Pt):
-        rng = np.random.RandomState(self.seed)  
+    def make_data(self, P, Pt, dataSeed=1234):
+        rng = np.random.RandomState(dataSeed)  
         # Generate a random normalized teacher weight vector (w)
         w = rng.randn(self.N0)
         w /= np.linalg.norm(w)
@@ -30,36 +42,50 @@ class linear_dataset:
         X = rng.randn(P, self.N0)
         Y = np.dot(X, w).reshape(P,1) #equivalent to unsqueeze
         # Create test data
-        Xtest = rng.randn(Pt, self.N0)
+        Xtest = rng.randn(Pt,self.N0)
         Ytest = np.dot(Xtest, w).reshape(Pt,1)
-        return torch.tensor(X, dtype=torch.float), torch.tensor(Y, dtype=torch.float), torch.tensor( Xtest, dtype=torch.float), torch.tensor(Ytest, dtype=torch.float)
+        #return torch.tensor(X, dtype=torch.float), torch.tensor(Y, dtype=torch.float), torch.tensor( Xtest, dtype=torch.float), torch.tensor(Ytest, dtype=torch.float)
+        return X, Y, Xtest, Ytest
+    
 
 class synthetic_1hl_dataset: 
-    def __init__(self, N0, hidden_dim, act, dataSeed = 1234):
+    def __init__(self, N0, hidden_dim, act, netSeed = 4321):
+        """
+        Generates random gaussian data with label given by a 1 hidden layer teacher network.
+        Init takes parameter of the teacher 1hl network 
+        N0: input dimension, this will also match data dimension,
+        hidden_dim: number of teacher hidden units, 
+        act: activation function of teacher's network, 
+        netSeed: random seed for initializing the teacher network    
+        """
         self.N0 = N0
         self.hidden_dim = hidden_dim
-        model = FCNet(N0, hidden_dim, L=1)
-        self.model = model.Sequential(bias = False, act_func=act)
-        # Initialize the model parameters
-        self.seed = dataSeed
-        self.initialize_model()
+        model = FCNet(N0, hidden_dim, L=1,bias = False, act=act)
+        self.model = model.Sequential()
+        # Initialize the model parameters with netSeed
+        self.initialize_model(netSeed)
 
-    def initialize_model(self):
+    def initialize_model(self,netSeed):
+        rng = np.random.RandomState(netSeed)
         # Set the model to evaluation mode and initialize with random weights
         self.model.eval()
         with torch.no_grad():
             for param in self.model.parameters():
-                nn.init.normal_(param, mean=0, std=1)
+                if param.requires_grad:
+                    # Generate numpy array with the same shape
+                    numpy_values = rng.normal(0, 1, size=param.shape)
+                    # Convert to torch tensor and assign
+                    param.copy_(torch.from_numpy(numpy_values).float())
+            self.model.eval()
     
-    def make_data(self, P, Pt):
-        rng = np.random.RandomState(self.seed) 
-        inputs = torch.tensor(rng.randn(P, self.N0), dtype=torch.float)
-        test_inputs = torch.tensor(rng.randn(Pt, self.N0), dtype=torch.float)
+    def make_data(self, P, Pt, dataSeed = 1234):
+        rng = np.random.RandomState(dataSeed) 
+        X = torch.tensor(rng.randn(P, self.N0), dtype=torch.float)
+        Xtest = torch.tensor(rng.randn(Pt, self.N0), dtype=torch.float)
         with torch.no_grad():
-            targets = self.model(inputs).squeeze()
-            test_targets = self.model(test_inputs).squeeze()
-        
-        return inputs, targets.unsqueeze(1), test_inputs, test_targets.unsqueeze(1)
+            Y = self.model(X)
+            Ytest = self.model(Xtest)
+        return X.numpy(), Y.numpy(), Xtest.numpy(), Ytest.numpy()
     
 
 class random_binary_Ksparse_dataset:
@@ -71,13 +97,10 @@ class random_binary_Ksparse_dataset:
     2. Take sign to get -1/1 values
     3. Labels are product of first K features: For K =4, the labels are Y = X[:,0] * X[:,1] * X[:,2] * X[:,3]
     """
-    def __init__(self, N0, P, Ptest, K, seed):
-        self.N0 = N0 #number of features
-        self.P = P #number of training samples
-        self.Ptest = Ptest
-        self.seed = seed
-        self.K = K #number of feature used in the labels. For example, if K=4, the labels are the product of the first 4 features.
-    
+    def __init__(self,N0, K):
+        self.N0 = N0 
+        self.K = K
+
     def product_of_first_k_features(self, X, K):
             """
             Compute the product of the first K features for each sample.
@@ -93,23 +116,23 @@ class random_binary_Ksparse_dataset:
             Y = np.prod(X[:, :K], axis=1, keepdims=True)
             return Y
     
-    def make_data(self):
-        """Generate training and test data."""
+    def make_data(self, P, Ptest, dataSeed):
+        """
+        Generate random binary data with labels as product of first K features. 
+        Parameters: 
+                   N0: number of features, 
+                   P: number of training samples, Ptest: number of test samples, 
+                   K: number of features used in labels, For example, if K=4, the labels are the product of the first 4 features.
+                   seed: random seed for data generation"""
         # Set random seed for reproducibility
-        np.random.seed(self.seed)
-        
+        rng = np.random.RandomState(dataSeed)
         # Generate training data
-        X = np.random.normal(0, 1, size=(self.P, self.N0))
+        X = rng.randn(P, self.N0)
         X = np.sign(X)
-        
         # Generate test data
-        np.random.seed(self.seed + 1000)
-        Xtest = np.random.normal(0, 1, size=(self.Ptest, self.N0))
+        Xtest = rng.randn(Ptest, self.N0)
         Xtest = np.sign(Xtest)
-
         # Generate labels as product of first K features
         Y = self.product_of_first_k_features(X, self.K)
         Ytest = self.product_of_first_k_features(Xtest, self.K)
-
-        return X, Y, Xtest, Ytest
-    
+        return X, Y, Xtest, Ytest    

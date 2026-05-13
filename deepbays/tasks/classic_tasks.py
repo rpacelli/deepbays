@@ -4,6 +4,20 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+def map_to_binary(vector, original_values):
+    """
+    Transform a vector with two original values to -1/1.
+    
+    Args:
+        vector: array with two distinct values (e.g., [1, 3, 1, 3, ...])
+        original_values: tuple/list of two values (first goes to -1, second to 1)
+    
+    Returns:
+        array with values -1 and 1
+    """
+    return np.where(vector == original_values[0], -1, 1)
+
 def filter_by_label(data_loader, labels, P, dataSeed):
     data, target = next(iter(data_loader))
     mask = torch.zeros_like(target, dtype = torch.bool)
@@ -58,12 +72,14 @@ def oneHotEncoding(y, verbose=True):
     return oneHotEncoded;
 
 class mnist_dataset: 
-    def __init__(self, N, selectedLabels, dataSeed = 1234): #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
+    def __init__(self, N, selectedLabels, binaryLabels = True): 
+        #selectedLabels is a list, for example [2, 3] will select the labels 2 and 3 from mnist
+        #if binary labels = True, two class classification will be mapped into -1 and 1, otherwise the original labels will be kept.
         self.N = N
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels
-        self.dataSeed = dataSeed
-    def make_data(self, P, Ptest, batchSize = 60000, flatten = False):
+        self.binaryLabels = binaryLabels
+    def make_data(self, P, Ptest, batchSize = 60000, dataSeed = 1234, flatten = False):
         self.flatten = flatten
         transformDataset = getTransforms(self)
         trainset = torchvision.datasets.MNIST(root = './data', train = True, download = True, transform = transformDataset)
@@ -71,19 +87,23 @@ class mnist_dataset:
         testset = torchvision.datasets.MNIST(root = './data', train = False, download = True, transform = transformDataset)
         testloader = torch.utils.data.DataLoader(testset, batch_size = 10000, num_workers = 0)
         # Filter train and test datasets
-        data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.dataSeed)
-        testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, self.dataSeed)
+        data, labels = filter_by_label(trainloader, self.selectedLabels, P, dataSeed)
+        
+        testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, dataSeed)
+        if self.binaryLabels:
+            labels = map_to_binary(labels, self.selectedLabels)
+            testLabels = map_to_binary(testLabels, self.selectedLabels)
         data, testData  = normalizeDataset(data, testData)
-        return data, labels.unsqueeze(1), testData, testLabels.unsqueeze(1)
+        return data.numpy(), labels.reshape(P,1), testData.numpy(), testLabels.reshape(Ptest,1)
  
 
 class cifar_dataset: 
-    def __init__(self, N, selectedLabels, dataSeed=123):
+    def __init__(self, N, selectedLabels, binaryLabels = True):
         self.N = N
         self.side_size = int(np.sqrt(self.N))
         self.selectedLabels = selectedLabels
-        self.dataSeed = dataSeed
-    def make_data(self, P, Ptest, batchSize = 60000, flatten = False):
+        self.binaryLabels = binaryLabels
+    def make_data(self, P, Ptest, batchSize = 60000, dataSeed=123, flatten = False):
         self.flatten = flatten
         transformDataset = getTransforms(self)
         trainset = torchvision.datasets.CIFAR10(root = './data', train = True, download = True, transform = transformDataset)
@@ -92,7 +112,10 @@ class cifar_dataset:
         testloader = torch.utils.data.DataLoader(testset, batch_size = 10000, num_workers = 0)
         #all_data, targets = next(iter(trainloader))
         # Filter train and test datasets
-        data, labels = filter_by_label(trainloader, self.selectedLabels, P, self.dataSeed)
-        testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, self.dataSeed)
+        data, labels = filter_by_label(trainloader, self.selectedLabels, P, dataSeed)
+        testData, testLabels = filter_by_label(testloader, self.selectedLabels, Ptest, dataSeed)
         data, testData  = normalizeDataset(data, testData)
-        return data, labels.unsqueeze(1), testData, testLabels.unsqueeze(1)
+        if self.binaryLabels:
+            labels = map_to_binary(labels, self.selectedLabels)
+            testLabels = map_to_binary(testLabels, self.selectedLabels)
+        return data.numpy(), labels.reshape(P,1), testData.numpy(), testLabels.reshape(Ptest,1)
