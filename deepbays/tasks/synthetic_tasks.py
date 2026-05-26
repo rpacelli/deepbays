@@ -200,32 +200,110 @@ class pokerhand_dataset:
 
     
 class LiSompo_template_dataset:
-    def __init__(self, N0, gamma, sigma0, sigmaw, dataSeed = 1234):
-        ''' For description, see Li, Sompolinsky, PRX 2021, Appendix E: Template model.'''
+    def __init__(self, N0=200, gamma=0.05, sigma0=0.1, sigmaw=0.3, dataSeed = 1234, randomclusterlabels=False, clusters='normal'):
+        ''' For description, see Li, Sompolinsky, PRX 2021, Appendix E: Template model. Default params (up to seed) chosen as in their Fig.15'''
         self.N0 = N0
         self.gamma = gamma
         self.sigma0 = sigma0
         self.sigmaw = sigmaw
         self.seed = dataSeed
+        self.randomlabels = randomclusterlabels
+        self.clusters = clusters
     
     def make_data(self, P, Pt):
         rng = np.random.RandomState(self.seed)  
         # Generate a random normalized teacher weight vector (w)
         w = self.sigmaw * rng.randn(self.N0)
         # Create training data (the template vectors). 
-        # Note: the paper does not state how exactly the templates are drawn, need to assume normal here
-        X = rng.randn(P, self.N0)
-        Y = np.dot(X, w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(P)
-        Y = torch.Tensor(Y.reshape(P,1))  #equivalent to unsqueeze
+        if self.clusters == 'hypercube':
+            X = rng.choice([-1., 1.], size=(P, self.N0))
+        elif self.clusters == 'normal':
+            # Note: the paper does not state how exactly the templates are drawn, need to assume normal here
+            X = rng.randn(P, self.N0)
+        else:
+            raise ValueError(f'clusters keyword {self.clusters} not fitting any implemented option.')
+        if self.randomlabels:
+            Ynp = rng.choice([-1., 1.], size=P)
+        else:
+            Ynp = np.dot(X, w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(P)
+        Y = torch.Tensor(Ynp.reshape(P,1))  #equivalent to unsqueeze
         X = torch.Tensor(X)
         # Create test data: here the samples x are corrupted by noise (=clusters around template locations)
         idx = rng.choice(np.arange(P, dtype=int), size=Pt) # First, randomly select the Pt indices of the template vectors
         Xtest = np.sqrt(1 - self.gamma) * X.numpy()[idx]  + np.sqrt(self.gamma) * rng.randn(Pt,self.N0) # first in numpy for consistency with other class defs
-        Ytest = (np.dot(Xtest, w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(Pt)).reshape(Pt,1)
+        if self.randomlabels:
+            Ytest = Ynp[idx].reshape(Pt,1) # choose label according to cluster
+        else:
+            Ytest = (np.dot(Xtest, w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(Pt)).reshape(Pt,1)
+            # Ytest = (np.dot(X[idx], w) / np.sqrt(self.N0) + self.sigma0 * rng.randn(Pt)).reshape(Pt,1)
+            # Ytest = Ynp[idx].reshape(Pt,1)
         Xtest = torch.Tensor(Xtest)
         Ytest = torch.Tensor(Ytest)
         return X, Y, Xtest, Ytest
+
+
+
+class binary_gaussian_mixture_dataset:
+    def __init__(self, N0, sigma=1.0, p=0.5, dataSeed=1234):
+        """
+        Simple binary Gaussian mixture classification:
+          y in {0,1},   x | y ~ N( +/- m , sigma^2 * Id )
+        i.e. y=0 → mean -m, y=1 → mean +m, with m ~ N(0, I_N0) fixed.
+        The balance of the data classes can be varied by p in (0, 1).
+        """
+        self.N0 = N0
+        self.sigma = float(sigma)
+        self.p = float(p)          # class prior P(y=1); default balanced
+        self.seed = dataSeed
+
+    def make_data(self, P, Pt):
+        rng = np.random.RandomState(self.seed)
+        # Fixed teacher mean vector m ~ N(0, I)
+        m = rng.randn(self.N0)
+
+        def sample_block(n):
+            y = rng.binomial(1, self.p, size=(n, 1)).astype(np.int64)
+            # Mean selection
+            sign = (2 * y - 1).astype(np.float32)
+            means = sign * m                   # broadcast to (n, N0)
+            # Spherical noise
+            noise = self.sigma * rng.randn(n, self.N0)
+            x = means + noise
+            return torch.tensor(x), torch.tensor(y)
+
+        X, Y = sample_block(P)
+        Xtest, Ytest = sample_block(Pt)
+        return X, Y, Xtest, Ytest
     
+    
+class ReLU_mean_dataset:
+    def __init__(self, N0, labelnoise = 0.05, dataSeed = 1234):
+        """
+        Synthetic task with Gaussian data and label corresponding to prior mean activation in first layer.
+        Used to probe difference between vanilla and noncentral Wishart theories.
+        """
+        from deepbays.kernels.kernels import mean_relu
+        self.N0 = N0
+        self.labelnoise = labelnoise
+        self.mean_relu = mean_relu
+        self.seed = dataSeed
+    
+    def make_data(self, P, Pt):
+        rng = np.random.RandomState(self.seed)  
+        # Create training data
+        X = rng.randn(P, self.N0)
+        CX = np.dot(X, X.T).diagonal() / self.N0
+        Y = self.mean_relu(CX) + self.labelnoise * rng.randn(P)
+        X = torch.Tensor(X)
+        Y = torch.Tensor(Y).unsqueeze(1)
+        # Create test data
+        Xtest = rng.randn(Pt, self.N0)
+        CXtest = np.dot(Xtest, Xtest.T).diagonal() / self.N0
+        Ytest = self.mean_relu(CXtest) + self.labelnoise * rng.randn(Pt)
+        Xtest = torch.Tensor(Xtest)
+        Ytest = torch.Tensor(Ytest).unsqueeze(1)
+        return X, Y, Xtest, Ytest
+
     
 
 def add_first_layer_bias(X, Xtest):
