@@ -10,4 +10,5 @@ from .theory_deep_FC_vanilla_singleOrderParam import FC_deep_vanilla_singleOrder
 from .theory_2HL_FC_full import FC_2HL_full
 from .theory_deep_FC_full import FC_deep_full
 from .theory_1HL_CONV import CONV_1HL, validation_CONV_1HL
+from .theory_1HL_1DCONV import CONV_1HL
 #from .theory_1HL_extras import FC_1HL_spectral, FC_1HL_multitask
