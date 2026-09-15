@@ -359,9 +359,9 @@ class equicorrelated_dataset:
         X = self.N0 ** 0.5 * sqrtC @ Q.T
 
         if self.targets == "aligned":
-            y = torch.ones(Ptot) + self.noise * torch.randn(Ptot)
+            y = torch.ones((Ptot, 1))
         elif self.targets == "random":
-            y = torch.randn(Ptot)
+            y = torch.randn((Ptot, 1))
         else:
             raise ValueError("targets must be 'aligned' or 'random'")
         inputs, test_inputs = X[:P], X[P:]
