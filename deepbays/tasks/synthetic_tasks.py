@@ -342,28 +342,32 @@ class ReLU_mean_dataset:
         return X, Y, Xtest, Ytest
 
 class equicorrelated_dataset:
-    def __init__(self, N0, rho=0.5, targets="aligned"):
+    def __init__(self, N0, rho=0.5, targets="aligned", dataSeed = 1234):
         self.N0 = N0
         self.rho = rho
         self.targets = targets
+        self.seed = dataSeed
 
     def make_data(self, P, Pt):
         Ptot = P + Pt
-        assert -1.0 / (Ptot - 1) <= self.rho <= 1.0, "C must be positive semidefinite"        
+        assert -1.0 / (Ptot - 1) <= self.rho <= 1.0, "C must be positive semidefinite"
         assert self.N0 >= Ptot, "exact construction needs N0 >= P + Pt"
+        rng = np.random.RandomState(self.seed)
 
         lam0 = 1.0 - self.rho
         lam1 = 1.0 - self.rho + Ptot * self.rho
-        sqrtC = lam0 ** 0.5 * torch.eye(Ptot) + (lam1 ** 0.5 - lam0 ** 0.5) / Ptot * torch.ones((Ptot, Ptot))
-        Q, _ = torch.linalg.qr(torch.randn((self.N0, Ptot)))
+        sqrtC = lam0 ** 0.5 * np.eye(Ptot) + (lam1 ** 0.5 - lam0 ** 0.5) / Ptot * np.ones((Ptot, Ptot))
+        Q, _ = np.linalg.qr(rng.randn(self.N0, Ptot))
         X = self.N0 ** 0.5 * sqrtC @ Q.T
 
         if self.targets == "aligned":
-            y = torch.ones((Ptot, 1))
+            y = np.ones((Ptot, 1))
         elif self.targets == "random":
-            y = torch.randn((Ptot, 1))
+            y = rng.randn(Ptot, 1)
         else:
             raise ValueError("targets must be 'aligned' or 'random'")
+        X = torch.tensor(X, dtype=torch.float)
+        y = torch.tensor(y, dtype=torch.float)
         inputs, test_inputs = X[:P], X[P:]
         targets, test_targets = y[:P], y[P:]
         return inputs, targets, test_inputs, test_targets
