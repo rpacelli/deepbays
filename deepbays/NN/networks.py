@@ -7,6 +7,7 @@ import torch.optim as optim
 from torch import nn
 from torch.optim import Optimizer
 import torch.nn.functional as F
+from ..conv_geometry import convolution_geometry, layer_precisions, positive_int, spatial_pair
 
 class Erf(torch.nn.Module):
     def __init__(self):
@@ -109,6 +110,73 @@ class FCNet:
         return sequential
     
 class ConvNet:
+    """L convolutional layers and a scalar linear readout.
+
+    N0 is a (height, width) tuple or the pixel count of a square image (per
+    input channel). Inputs have shape (batch, inputChannels, height, width).
+    Nc is a common channel count, or a list of L counts;
+    CNN_deep theory currently requires equal channel counts. mask/stride/padding use
+    tuples for spatial pairs and lists for per-layer settings. 'same' padding
+    supports any stride and puts extra padding on the right/bottom.
+
+    Each weight has prior variance 1/precision; Norm divides convolution
+    outputs by sqrt(input_channels * filter_area), and the scalar readout by
+    sqrt(final_channels * final_patches) * gamma. There is no pooling or bias.
+    These conventions agree with rkgp.CNN_deep, including padded filter areas.
+    """
+
+    def __init__(self, N0, Nc, L, mask=3, stride=1, bias=False, act="erf",
+                 inputChannels=1, precisions=None, gamma=1., padding="valid"):
+        self.L = positive_int(L, "L")
+        self.inputChannels = positive_int(inputChannels, "inputChannels")
+        if isinstance(N0, (int, np.integer)):
+            pixels = positive_int(N0, "N0")
+            side = int(np.sqrt(pixels))
+            if side * side != pixels:
+                raise ValueError("integer N0 must be a square pixel count; use (height, width) for a rectangle")
+            self.image_shape = (side, side)
+        else:
+            self.image_shape = spatial_pair(N0, "N0")
+        if bias:
+            raise ValueError("the matching CNN theory has no biases; use bias=False")
+        if not np.isfinite(gamma) or gamma <= 0:
+            raise ValueError("gamma must be positive and finite")
+        if act == "quadratic":
+            act = "quad"
+        make_act_module(act)  # validate before building a partial network
+        counts = Nc if isinstance(Nc, list) else [Nc] * self.L
+        if len(counts) != self.L:
+            raise ValueError("Nc must be a positive integer or a list with L entries")
+        self.channels = tuple(positive_int(n, "Nc") for n in counts)
+        self.precisions = layer_precisions(precisions, self.L)
+        self.geometry = convolution_geometry(self.image_shape, self.L, mask, stride, padding)
+        self.N0, self.Nc = N0, Nc
+        self.mask, self.stride, self.padding = mask, stride, padding
+        self.bias, self.act, self.gamma = False, act, float(gamma)
+        self.patch_shapes = tuple(layer.output_shape for layer in self.geometry)
+        self.final_patches = self.geometry[-1].patches
+
+    def Sequential(self):
+        modules = []
+        input_channels = self.inputChannels
+        for l, (channels, geometry) in enumerate(zip(self.channels, self.geometry)):
+            if any(geometry.padding):
+                modules.append(nn.ZeroPad2d(geometry.padding))
+            layer = nn.Conv2d(input_channels, channels, geometry.kernel_size,
+                              stride=geometry.stride, padding=0, bias=False)
+            init.normal_(layer.weight, std=1. / np.sqrt(self.precisions[l]))
+            modules.extend([layer, Norm(np.sqrt(input_channels * geometry.area)),
+                            make_act_module(self.act)])
+            input_channels = channels
+        modules.append(nn.Flatten())
+        features = self.channels[-1] * self.final_patches
+        readout = nn.Linear(features, 1, bias=False)
+        init.normal_(readout.weight, std=1. / np.sqrt(self.precisions[-1]))
+        modules.extend([readout, Norm(np.sqrt(features) * self.gamma)])
+        return nn.Sequential(*modules)
+
+
+class old_ConvNet:
     def __init__(self, N0 : int,  #input size, necessary to compute normalization
                  Nc : int,  # number of channels in internal layers
                  mask : int, #mask

@@ -46,7 +46,7 @@ class LangevinOpt(torch.optim.Optimizer):
         defaults = {'lr': lr, 'temperature': temperature}
         param_groups = []
         for layer in model.children():
-            if isinstance(layer, (torch.nn.Linear)):
+            if isinstance(layer, (torch.nn.Linear, torch.nn.Conv2d)):
                 param_groups.append({'params': layer.parameters()})
 
         super().__init__(param_groups, defaults)
@@ -97,4 +97,3 @@ def train(net, data, labels, criterion, optimizer):
 
 def regLoss(output, target):
     return 0.5 * torch.sum((output - target)**2)
-    

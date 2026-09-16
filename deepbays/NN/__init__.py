@@ -6,5 +6,5 @@ from .training import train, regLoss, test
 # from .training_maybe_faster import LangevinOpt
 from .training import LangevinOpt
 from .networks import FCNet
-from .networks import ConvNet
+from .networks import ConvNet, old_ConvNet
 from .networks import make_act_module

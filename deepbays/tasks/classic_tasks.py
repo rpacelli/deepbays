@@ -88,9 +88,14 @@ class cifar_dataset:
         self.selectedLabels = selectedLabels
         self.dataSeed = dataSeed
         self.dirpath = dirpath
-    def make_data(self, P, Ptest, batchSize = 60000, flatten = False, normalize=True):
+    def make_data(self, P, Ptest, batchSize = 60000, flatten = False, normalize=True, grayscale=True):
+        """Load CIFAR10; grayscale=False retains all three RGB channels.
+
+        N counts spatial pixels, independent of the number of channels.
+        Normalization uses one global training mean/std in either color mode.
+        """
         self.flatten = flatten
-        transformDataset = getTransforms(self)
+        transformDataset = getTransforms(self, grayscale=grayscale)
         trainset = torchvision.datasets.CIFAR10(root = self.dirpath, train = True, download = True, transform = transformDataset)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size = batchSize, num_workers = 0)
         testset = torchvision.datasets.CIFAR10(root = self.dirpath, train = False, download = True, transform = transformDataset)
