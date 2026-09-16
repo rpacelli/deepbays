@@ -313,4 +313,61 @@ def add_first_layer_bias(X, Xtest):
     return Xnew, Xtestnew
 
 
+class ReLU_mean_dataset:
+    def __init__(self, N0, labelnoise = 0.05, dataSeed = 1234):
+        """
+        Synthetic task with Gaussian data and label corresponding to prior mean activation in first layer.
+        Used to probe difference between vanilla and noncentral Wishart theories.
+        """
+        from deepbays.kernels.kernels import mean_relu
+        self.N0 = N0
+        self.labelnoise = labelnoise
+        self.mean_relu = mean_relu
+        self.seed = dataSeed
     
+    def make_data(self, P, Pt):
+        rng = np.random.RandomState(self.seed)  
+        # Create training data
+        X = rng.randn(P, self.N0)
+        CX = np.dot(X, X.T).diagonal() / self.N0
+        Y = self.mean_relu(CX) + self.labelnoise * rng.randn(P)
+        X = torch.Tensor(X)
+        Y = torch.Tensor(Y).unsqueeze(1)
+        # Create test data
+        Xtest = rng.randn(Pt, self.N0)
+        CXtest = np.dot(Xtest, Xtest.T).diagonal() / self.N0
+        Ytest = self.mean_relu(CXtest) + self.labelnoise * rng.randn(Pt)
+        Xtest = torch.Tensor(Xtest)
+        Ytest = torch.Tensor(Ytest).unsqueeze(1)
+        return X, Y, Xtest, Ytest
+
+class equicorrelated_dataset:
+    def __init__(self, N0, rho=0.5, targets="aligned", dataSeed = 1234):
+        self.N0 = N0
+        self.rho = rho
+        self.targets = targets
+        self.seed = dataSeed
+
+    def make_data(self, P, Pt):
+        Ptot = P + Pt
+        assert -1.0 / (Ptot - 1) <= self.rho <= 1.0, "C must be positive semidefinite"
+        assert self.N0 >= Ptot, "exact construction needs N0 >= P + Pt"
+        rng = np.random.RandomState(self.seed)
+
+        lam0 = 1.0 - self.rho
+        lam1 = 1.0 - self.rho + Ptot * self.rho
+        sqrtC = lam0 ** 0.5 * np.eye(Ptot) + (lam1 ** 0.5 - lam0 ** 0.5) / Ptot * np.ones((Ptot, Ptot))
+        Q, _ = np.linalg.qr(rng.randn(self.N0, Ptot))
+        X = self.N0 ** 0.5 * sqrtC @ Q.T
+
+        if self.targets == "aligned":
+            y = np.ones((Ptot, 1))
+        elif self.targets == "random":
+            y = rng.randn(Ptot, 1)
+        else:
+            raise ValueError("targets must be 'aligned' or 'random'")
+        X = torch.tensor(X, dtype=torch.float)
+        y = torch.tensor(y, dtype=torch.float)
+        inputs, test_inputs = X[:P], X[P:]
+        targets, test_targets = y[:P], y[P:]
+        return inputs, targets, test_inputs, test_targets
