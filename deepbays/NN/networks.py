@@ -56,12 +56,18 @@ def make_act_module(actfunc_string):
         return Id() 
     elif actfunc_string == "square":
         return Square()
-    elif actfunc_string == "quad":
+    elif actfunc_string in ("quad", "quadratic"):
         return Quad()
     else:
         raise ValueError(f"nonlinearity {actfunc_string} appears to not implemented so far!")
 
-class FCNet: 
+class FCNet:
+    """Dense network with D outputs; D=1 preserves the scalar architecture.
+
+    Each readout is divided by sqrt(N1)*gamma, independently of D.
+    D is keyword-only so existing positional calls retain their meaning.
+    """
+
     def __init__(self, 
                  N0 : int, #input dimension
                  N1 : int, #number of hidden layer units
@@ -69,9 +75,11 @@ class FCNet:
                  bias : bool = False, #if True, add bias for each layer
                  act : str = "erf", #activation function
                  precisions = None,  # list of layer-wise precisions if deviating from all 1. 
-                 gamma : float = 1.0 # feature learning parameter, for MF use sqrt(N1) and for SP use 1.0
+                 gamma : float = 1.0, # feature learning parameter, for MF use sqrt(N1) and for SP use 1.0
                                      # Note: Biases are not affected by gamma here. Recheck if this is desired (no biases in Yang'22 or most other MF papers). 
+                 *, D : int = 1
                  ):
+        self.D = positive_int(D, "D")
         self.N0, self.N1, self.L, self.act, self.bias, self.precisions, self.gamma = N0, N1, L, act, bias, precisions, gamma
         if precisions is not None:
             assert len(precisions) == L+1, "Precisions must be a list of one precision value per layer"
@@ -99,7 +107,7 @@ class FCNet:
             modules.append(Norm(np.sqrt(self.N1)))
         # build output layer
         modules.append(make_act_module(self.act))
-        last_layer = nn.Linear(self.N1, 1, bias=self.bias)  
+        last_layer = nn.Linear(self.N1, self.D, bias=self.bias)
         init.normal_(last_layer.weight, std = 1. / np.sqrt(self.precisions[-1]) ) 
         if self.bias:
                 init.normal_(last_layer.bias,std = 1)
@@ -110,7 +118,7 @@ class FCNet:
         return sequential
     
 class ConvNet:
-    """L convolutional layers and a scalar linear readout.
+    """L convolutional layers and D linear outputs (default D=1).
 
     N0 is a (height, width) tuple or the pixel count of a square image (per
     input channel). Inputs have shape (batch, inputChannels, height, width).
@@ -121,12 +129,19 @@ class ConvNet:
 
     Each weight has prior variance 1/precision; Norm divides convolution
     outputs by sqrt(input_channels * filter_area), and the scalar readout by
-    sqrt(final_channels * final_patches) * gamma. There is no pooling or bias.
-    These conventions agree with rkgp.CNN_deep, including padded filter areas.
+    sqrt(final_channels * final_patches) * gamma. With pooling='avg', hidden
+    features are spatially averaged before readout, normalized by
+    sqrt(final_channels)*gamma. D never changes the normalization. Biases
+    are unsupported. The default agrees with rkgp.CNN_deep as before.
     """
 
     def __init__(self, N0, Nc, L, mask=3, stride=1, bias=False, act="erf",
-                 inputChannels=1, precisions=None, gamma=1., padding="valid"):
+                 inputChannels=1, precisions=None, gamma=1., padding="valid",
+                 *, D=1, pooling=None):
+        self.D = positive_int(D, "D")
+        if pooling not in (None, 'avg'):
+            raise ValueError("pooling must be None or 'avg'")
+        self.pooling = pooling
         self.L = positive_int(L, "L")
         self.inputChannels = positive_int(inputChannels, "inputChannels")
         if isinstance(N0, (int, np.integer)):
@@ -168,9 +183,11 @@ class ConvNet:
             modules.extend([layer, Norm(np.sqrt(input_channels * geometry.area)),
                             make_act_module(self.act)])
             input_channels = channels
+        if self.pooling == 'avg':
+            modules.append(nn.AdaptiveAvgPool2d(1))
         modules.append(nn.Flatten())
-        features = self.channels[-1] * self.final_patches
-        readout = nn.Linear(features, 1, bias=False)
+        features = self.channels[-1] * (1 if self.pooling == 'avg' else self.final_patches)
+        readout = nn.Linear(features, self.D, bias=False)
         init.normal_(readout.weight, std=1. / np.sqrt(self.precisions[-1]))
         modules.extend([readout, Norm(np.sqrt(features) * self.gamma)])
         return nn.Sequential(*modules)

@@ -17,8 +17,9 @@ import warnings
 import numpy as np
 import torch
 from scipy.linalg import cho_factor, cho_solve
-from scipy.optimize import minimize
 from ..conv_geometry import layer_precisions, positive_int
+from ._matrix_order_parameter import (SymmetricCoordinates, matrix_prior,
+                                      exp_divided_differences, minimize_log_matrix)
 from ..kernels.conv_kernels import StackedCNNKernel, as_numpy, image_batch
 
 
@@ -85,27 +86,13 @@ class CNN_deep:
             raise RuntimeError("call optimize() and check converged, or explicitly select setIW(), before prediction")
 
     def _pack(self, matrix):
-        # Orthonormal coordinates on symmetric matrices preserve Frobenius
-        # inner products: off-diagonal entries are multiplied by sqrt(2).
-        return matrix[self._indices] * self._coordinate_scale
+        return self._coordinates.pack(matrix)
 
     def _unpack(self, vector):
-        matrix = np.zeros((self.d, self.d))
-        matrix[self._indices] = vector / self._coordinate_scale
-        matrix[(self._indices[1], self._indices[0])] = matrix[self._indices]
-        return matrix
+        return self._coordinates.unpack(vector)
 
     def _validate_q(self, Q):
-        Q = as_numpy(Q)
-        if Q.ndim == 0:
-            Q = float(Q) * np.eye(self.d)
-        if Q.shape != (self.d, self.d) or not np.all(np.isfinite(Q)) or not np.allclose(Q, Q.T, rtol=1e-10, atol=1e-12):
-            raise ValueError(f"Q must be a finite symmetric ({self.d}, {self.d}) matrix, or a positive scalar times identity")
-        Q = (Q + Q.T) / 2
-        eigenvalues, vectors = np.linalg.eigh(Q)
-        if eigenvalues[0] <= 0:
-            raise ValueError("Q must be strictly positive definite")
-        return Q, eigenvalues, vectors
+        return self._coordinates.validate_q(Q)
 
     def preprocess(self, X, Y):
         """Cache final patch blocks and symmetric kernel coefficients once."""
@@ -134,8 +121,9 @@ class CNN_deep:
         self.patch_shapes = tuple(layer.output_shape for layer in self.builder.layers)
         self.H = blocks.transpose(2, 3, 0, 1)  # H[i,j,mu,nu], includes readout scaling
         self.H.setflags(write=False)
-        self._indices = np.triu_indices(self.d)
-        self._coordinate_scale = np.where(self._indices[0] == self._indices[1], 1., np.sqrt(2.))
+        self._coordinates = SymmetricCoordinates(self.d)
+        self._indices = self._coordinates.indices
+        self._coordinate_scale = self._coordinates.scale
         i, j = self._indices
         coefficients = (blocks[:, :, i, j] + blocks[:, :, j, i]) / (2 * self.d)
         coefficients *= self._coordinate_scale
@@ -202,15 +190,11 @@ class CNN_deep:
             exp_s = np.exp(eigenvalues)
             Q = (vectors * exp_s) @ vectors.T
             value, gradient_q = self._likelihood(Q)
-            value += self.L * np.expm1(eigenvalues / self.L).sum() - eigenvalues.sum()
-            # exp divided differences, stable both near repeated eigenvalues
-            # and for separated eigenvalues. At a=b the derivative is exp(a).
-            distance = np.abs(eigenvalues[:, None] - eigenvalues[None, :])
-            ratio = np.ones_like(distance)
-            np.divide(-np.expm1(-distance), distance, out=ratio, where=distance != 0)
-            frechet = np.exp(np.maximum(eigenvalues[:, None], eigenvalues[None, :])) * ratio
-            gradient = vectors @ (frechet * (vectors.T @ gradient_q @ vectors)) @ vectors.T
-            gradient += (vectors * np.expm1(eigenvalues / self.L)) @ vectors.T
+            prior, prior_gradient = matrix_prior(eigenvalues, self.L)
+            value += prior
+            frechet = exp_divided_differences(eigenvalues)
+            gradient = vectors @ (frechet * (vectors.T @ gradient_q @ vectors)
+                                  + np.diag(prior_gradient)) @ vectors.T
         packed = self._pack((gradient + gradient.T) / 2)
         if not np.isfinite(value) or not np.all(np.isfinite(packed)):
             raise FloatingPointError("non-finite action or gradient")
@@ -231,67 +215,16 @@ class CNN_deep:
         proof that the global minimum has been found.
         """
         self._require_preprocessed()
-        maxiter = positive_int(maxiter, "maxiter")
-        if not isinstance(n_restarts, (int, np.integer)) or n_restarts < 0:
-            raise ValueError("n_restarts must be a nonnegative integer")
-        if not np.isfinite(gtol) or gtol <= 0:
-            raise ValueError("gtol must be positive and finite")
-        Q, ev, basis = self._validate_q(Q0)
-        start = self._pack((basis * np.log(ev)) @ basis.T)
         self.converged = False
         self.result, self.solution_kind = None, None
         self.optimization_results = []
         self._invalidate_prediction()
-        # Rank problems at zero temperature cannot be fixed by finding a
-        # different SPD Q. Report them before the line search begins.
-        try:
-            self._log_action_gradient(start)
-        except np.linalg.LinAlgError as error:
-            raise ValueError("training covariance is not positive definite; at T=0 use independent inputs or a positive T") from error
-
-        def objective(x):
-            try:
-                return self._log_action_gradient(x)
-            except (np.linalg.LinAlgError, FloatingPointError):
-                # Reject unrepresentable line-search trials. Independent final
-                # checks below prevent an optimizer flag from hiding a failure.
-                return np.inf, np.zeros_like(x)
-
-        rng = np.random.default_rng(random_state)
-        starts = [start]
-        for k in range(n_restarts):
-            offset = (-1 if k % 2 == 0 else 1) * (1 + k // 2)
-            starts.append(start + offset * self._pack(np.eye(self.d)) + rng.normal(0, .05, len(start)))
-        results = []
-        for initial in starts:
-            result = minimize(objective, initial, jac=True, method="L-BFGS-B",
-                              options={"maxiter": maxiter, "gtol": gtol, "ftol": 1e-14, "maxls": 40, "maxcor": 20})
-            result.fun, result.jac = objective(result.x)
-            result.gradient_norm = float(np.linalg.norm(result.jac, ord=np.inf)) if np.isfinite(result.fun) else np.inf
-            result.converged = np.isfinite(result.fun) and result.gradient_norm <= gtol
-            results.append(result)
-            if not result.converged and len(start) <= 512 and np.isfinite(result.fun):
-                refined = minimize(objective, result.x, jac=True, method="BFGS",
-                                   options={"maxiter": maxiter, "gtol": gtol})
-                refined.fun, refined.jac = objective(refined.x)
-                refined.gradient_norm = float(np.linalg.norm(refined.jac, ord=np.inf)) if np.isfinite(refined.fun) else np.inf
-                refined.converged = np.isfinite(refined.fun) and refined.gradient_norm <= gtol
-                results.append(refined)
-        finite = [r for r in results if np.isfinite(r.fun)]
-        if not finite:
-            raise RuntimeError("all CNN saddle attempts failed; inspect temperature, priors, and input scale")
-        minimum = min(r.fun for r in finite)
-        tied = [r for r in finite if r.fun <= minimum + 1e-12 * (1 + abs(minimum))]
-        result = min(tied, key=lambda r: (not r.converged, r.gradient_norm))
+        result, results = minimize_log_matrix(
+            self._log_action_gradient, self._coordinates, self.L, Q0=Q0,
+            maxiter=maxiter, gtol=gtol, n_restarts=n_restarts, random_state=random_state)
         self.optimization_results, self.result = results, result
-        ev, basis = np.linalg.eigh(self._unpack(result.x))
-        self.optQ = (basis * np.exp(ev)) @ basis.T
-        self.optR = (basis * np.exp(ev / self.L)) @ basis.T
+        self.optQ, self.optR = result.Q, result.R
         self.converged = bool(result.converged)
-        if np.linalg.eigvalsh(self.optQ)[0] <= 0:
-            self.converged = False
-            result.converged = False
-            result.message = "Q is too ill-conditioned to represent as positive definite in float64"
         self.solution_kind = "saddle"
         if not self.converged:
             warnings.warn(f"CNN saddle did not converge: log-coordinate gradient norm {result.gradient_norm:.3g}; predictions are disabled", RuntimeWarning)

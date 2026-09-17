@@ -8,6 +8,9 @@ from .theory_2HL_FC_single_output_nonodd import FC_2HL_nonodd
 from .theory_deep_FC_nested import FC_deep_nested
 from .theory_deep_FC_vanilla import FC_deep_vanilla
 from .theory_deep_CNN import CNN_deep, CONV_deep
+from .theory_deep_FC_multioutput import FC_deep_multioutput
+from .theory_deep_CNN_multioutput import CNN_deep_multioutput
+from .theory_deep_classification import FC_deep_classifier, CNN_deep_classifier
 from .theory_deep_FC_vanilla_singleOrderParam import FC_deep_vanilla_singleOrderParam
 from .theory_deep_nonodd_nomeanfluct import FC_deep_nonodd_nomeanfluct
 from .theory_2HL_FC_full import FC_2HL_full
