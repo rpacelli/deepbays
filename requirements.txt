@@ -1,0 +1,8 @@
+# Core runtime dependencies (also used by setup.py).
+# First install a matching torch/torchvision pair for your CPU or CUDA system.
+# These unpinned entries accept the installed build; no hardware index is set.
+numpy
+scipy
+torch
+torchvision
+tqdm

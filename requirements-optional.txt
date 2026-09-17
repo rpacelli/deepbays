@@ -1,0 +1,19 @@
+# Optional additions to requirements.txt; compatible with CPU and CUDA PyTorch.
+# Pyro and linear_operator require torch >= 2.0. Choose that build separately.
+# API ranges, not an environment lock; compatible installed versions are reused.
+
+# HMC/NUTS and convergence diagnostics
+pyro-ppl>=1.9.1,<2
+arviz>=0.22,<0.23
+
+# Structured kernel adapter and bundled digits dataset
+linear_operator>=0.6
+scikit-learn>=1.6
+
+# Plots, benchmark memory measurements, and CPU thread limits
+matplotlib>=3.8
+psutil>=5.9
+threadpoolctl>=3
+
+# Test suite
+pytest>=8
