@@ -67,6 +67,11 @@ class FCFeatures:
         self.provider.preprocess(X, np.zeros((len(X), self.provider.D)))
         return self.provider.finalKNNGP[:, :, None, None]
 
+    def covariance(self, Q):
+        # preprocess has already checked/corrected the scalar kernel spectrum.
+        from ._laplace_covariance import SeparableCovariance
+        return SeparableCovariance(self.provider.finalKNNGP, Q)
+
     def test(self, X):
         if X.shape[1] != self.provider.N0:
             raise ValueError('test input dimension must match training inputs')
@@ -85,11 +90,13 @@ class MatrixKernelModel:
         self._ready = False
         self._reset_solution()
 
-    def _reset_solution(self):
+    def _reset_solution(self, keep_evidence=False):
         self.optQ = self.optR = self.result = self.solution_kind = None
         self.converged = False
         self.optimization_results = []
-        self._cached_Q = self._posterior = self._warm_alpha = None
+        self._cached_Q = self._posterior = None
+        if not keep_evidence:
+            self._warm_alpha = self._last_evidence = None
         self._cached_evidence_signature = None
         self._prediction = None
 
@@ -143,11 +150,16 @@ class MatrixKernelModel:
         gradient = 2 * self.operator.adjoint(self._evidence(Q)[1]) / self.N1
         return (gradient + gradient.T) / 2 + (U * (ev**(1 / self.L - 1) - 1 / ev)) @ U.T
 
-    def optimize(self, Q0=1., maxiter=300, gtol=1e-6, n_restarts=1, random_state=0):
+    def optimize(self, Q0=1., maxiter=300, gtol=1e-6, n_restarts=0, random_state=0, *, verbose=False):
         self._require_ready()
-        self._reset_solution()
-        result, attempts = minimize_log_matrix(self._log_action_gradient, self._coordinates,
-                                               self.L, Q0, maxiter, gtol, n_restarts, random_state)
+        self._reset_solution(keep_evidence=True)
+        self._optimizing, self._optimization_verbose = True, bool(verbose)
+        try:
+            result, attempts = minimize_log_matrix(self._log_action_gradient, self._coordinates,
+                                                   self.L, Q0, maxiter, gtol, n_restarts, random_state,
+                                                   verbose=verbose)
+        finally:
+            self._optimizing = self._optimization_verbose = False
         self.result, self.optimization_results = result, attempts
         self.optQ, self.optR = result.Q.copy(), result.R.copy()
         self.converged, self.solution_kind = bool(result.converged), 'saddle'
@@ -159,7 +171,7 @@ class MatrixKernelModel:
         """Explicitly select a fixed physical covariance for diagnostics."""
         self._require_ready()
         Q, ev, U = self._coordinates.validate_q(Q)
-        self._reset_solution()
+        self._reset_solution(keep_evidence=True)
         self.optQ = Q.copy()
         self.optR = (U * ev**(1 / self.L)) @ U.T
         self.converged, self.solution_kind = True, 'fixed_Q'

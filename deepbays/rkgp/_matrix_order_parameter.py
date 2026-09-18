@@ -4,6 +4,7 @@ Objectives take packed symmetric log(Q) coordinates. Keeping the callback at
 this level lets separable kernels reuse the log-matrix eigensystem directly.
 """
 
+from time import perf_counter
 import numpy as np
 from scipy.optimize import minimize
 from ..conv_geometry import positive_int
@@ -65,8 +66,12 @@ def exp_divided_differences(eigenvalues, normalized=False):
 
 
 def minimize_log_matrix(objective, coordinates, depth, Q0=1., maxiter=500,
-                        gtol=1e-6, n_restarts=2, random_state=0):
-    """L-BFGS, optional small BFGS refinement, and independent final checks.
+                        gtol=1e-6, n_restarts=0, random_state=0, *, verbose=False):
+    """One L-BFGS start by default; refine only after failed convergence.
+
+    n_restarts explicitly requests additional starts. verbose prints progress
+    without evaluating the objective for logging. Final checks use its actual
+    analytic gradient; scipy termination flags alone do not certify convergence.
 
     Returns the selected scipy result and all attempts. Additional fields on
     the selected result include Q, R, log_eigenvalues, and eigenvectors.
@@ -79,19 +84,55 @@ def minimize_log_matrix(objective, coordinates, depth, Q0=1., maxiter=500,
         raise ValueError("gtol must be positive and finite")
     _, ev, basis = coordinates.validate_q(Q0)
     start = coordinates.pack((basis * np.log(ev)) @ basis.T)
-    try:
-        objective(start)
-    except np.linalg.LinAlgError as error:
-        raise ValueError("training covariance is not positive definite; at T=0 use independent inputs or a positive T") from error
+    started = perf_counter()
+    cached_x = cached_result = None
+    evaluations = 0
 
-    def safe_objective(x):
+    def safe_objective(x, validate_start=False):
+        nonlocal cached_x, cached_result, evaluations
+        if cached_x is not None and np.array_equal(x, cached_x):
+            return cached_result[0], cached_result[1].copy()
+        evaluations += 1
         try:
             value, gradient = objective(x)
             if not np.isfinite(value) or not np.all(np.isfinite(gradient)):
-                raise FloatingPointError("non-finite action or gradient")
-            return value, gradient
-        except (np.linalg.LinAlgError, FloatingPointError):
-            return np.inf, np.zeros_like(x)
+                raise FloatingPointError('non-finite action or gradient')
+        except (np.linalg.LinAlgError, FloatingPointError) as error:
+            if validate_start:
+                if isinstance(error, np.linalg.LinAlgError):
+                    raise ValueError("training covariance is not positive definite; at T=0 use independent inputs or a positive T") from error
+                raise
+            value, gradient = np.inf, np.zeros_like(x)
+            if verbose:
+                print(f'  Evaluation {evaluations} rejected: {error}', flush=True)
+        cached_x, cached_result = x.copy(), (float(value), np.asarray(gradient).copy())
+        return value, gradient
+
+    def run(initial, method, attempt):
+        iterations = 0
+        before = evaluations
+        def progress(x):
+            nonlocal iterations
+            iterations += 1
+            if verbose:
+                detail = ''
+                if cached_x is not None and np.array_equal(x, cached_x):
+                    detail = f', action={cached_result[0]:.9g}, gradient={np.linalg.norm(cached_result[1], ord=np.inf):.3g}'
+                print(f'  {method} iteration {iterations}, evaluations={evaluations}{detail}, elapsed={perf_counter()-started:.1f}s', flush=True)
+        if verbose:
+            print(f'Optimization start {attempt}/{n_restarts+1}: {method}; gtol={gtol:g}', flush=True)
+        if attempt == 1 and method == 'L-BFGS-B':
+            safe_objective(initial, validate_start=True)
+        options = dict(maxiter=maxiter, gtol=gtol)
+        if method == 'L-BFGS-B': options.update(ftol=1e-14, maxls=40, maxcor=20)
+        result = check(minimize(safe_objective, initial, jac=True, method=method,
+                                options=options, callback=progress))
+        result.objective_evaluations = evaluations-before
+        result.start_index = attempt-1
+        if verbose:
+            status = 'converged' if result.converged else 'not converged'
+            print(f'  {method} {status}: action={result.fun:.9g}, gradient={result.gradient_norm:.3g}, elapsed={perf_counter()-started:.1f}s', flush=True)
+        return result
 
     def check(result):
         result.fun, result.jac = safe_objective(result.x)
@@ -106,20 +147,18 @@ def minimize_log_matrix(objective, coordinates, depth, Q0=1., maxiter=500,
         starts.append(start + offset * coordinates.pack(np.eye(coordinates.d))
                       + rng.normal(0, .05, len(start)))
     results = []
-    for initial in starts:
-        result = check(minimize(safe_objective, initial, jac=True, method="L-BFGS-B",
-                                options={"maxiter": maxiter, "gtol": gtol, "ftol": 1e-14,
-                                         "maxls": 40, "maxcor": 20}))
+    for attempt, initial in enumerate(starts, 1):
+        result = run(initial, 'L-BFGS-B', attempt)
         results.append(result)
         # Full BFGS uses O(d^4) storage; keep it restricted to small problems.
         if not result.converged and len(start) <= 512 and np.isfinite(result.fun):
-            results.append(check(minimize(safe_objective, result.x, jac=True, method="BFGS",
-                                           options={"maxiter": maxiter, "gtol": gtol})))
+            results.append(run(result.x, 'BFGS', attempt))
     finite = [r for r in results if np.isfinite(r.fun)]
     if not finite:
         raise RuntimeError("all matrix saddle attempts failed; inspect temperature, priors, and input scale")
-    minimum = min(r.fun for r in finite)
-    tied = [r for r in finite if r.fun <= minimum + 1e-12 * (1 + abs(minimum))]
+    candidates = [r for r in finite if r.converged] or finite
+    minimum = min(r.fun for r in candidates)
+    tied = [r for r in candidates if r.fun <= minimum + 1e-12 * (1 + abs(minimum))]
     result = min(tied, key=lambda r: (not r.converged, r.gradient_norm))
     ev, basis = np.linalg.eigh(coordinates.unpack(result.x))
     result.log_eigenvalues, result.eigenvectors = ev, basis
@@ -130,4 +169,9 @@ def minimize_log_matrix(objective, coordinates, depth, Q0=1., maxiter=500,
             or np.linalg.eigvalsh(result.Q)[0] <= 0):
         result.converged = False
         result.message = "Q is too ill-conditioned to represent as positive definite in float64"
+    result.total_objective_evaluations = evaluations
+    result.optimization_seconds = perf_counter()-started
+    result.lower_unconverged_action = any(not r.converged and r.fun < result.fun-1e-12*(1+abs(result.fun)) for r in finite)
+    if verbose and result.lower_unconverged_action:
+        print('Warning: a lower-action candidate did not converge; inspect optimization_results.', flush=True)
     return result, results

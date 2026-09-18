@@ -15,7 +15,8 @@ from ._softmax_laplace import (contrast_basis, class_labels, fit_laplace,
 
 
 class SoftmaxMatrixModel(MatrixKernelModel):
-    def _classification_settings(self, D, beta, mode_tol, mode_maxiter):
+    def _classification_settings(self, D, beta, mode_tol, mode_maxiter, verbose=False):
+        self.verbose = bool(verbose)
         self.basis = contrast_basis(D)
         if not np.isfinite(beta) or beta < 0:
             raise ValueError('beta must be finite and nonnegative')
@@ -29,10 +30,27 @@ class SoftmaxMatrixModel(MatrixKernelModel):
         return class_labels(as_numpy(Y), count, self.D)
 
     def _evidence(self, Q):
-        state = fit_laplace(self.operator.dense(Q), self.Y, self.basis, self.beta,
+        Q = np.asarray(Q, dtype=float)
+        Q = (Q+Q.T)/2
+        signature = self._evidence_signature()
+        cached = self._last_evidence
+        if cached is not None and cached[1] == signature and np.array_equal(cached[0], Q):
+            state = cached[2]
+            return state.nll, state.gradient, state
+        # Retain only a small mode warm start while replacing the dense state.
+        self._last_evidence = self._posterior = self._cached_Q = None
+        cached = None
+        covariance = (self.features.covariance(Q) if isinstance(self.features, FCFeatures)
+                      else self.operator.dense(Q))
+        optimizing = getattr(self, '_optimizing', False)
+        state = fit_laplace(covariance, self.Y, self.basis, self.beta,
                             mode_tol=self.mode_tol, maxiter=self.mode_maxiter,
-                            alpha0=self._warm_alpha, max_dense_size=self.max_dense_size)
+                            alpha0=self._warm_alpha, max_dense_size=self.max_dense_size,
+                            verbose=self.verbose and not optimizing)
         self._warm_alpha = state.alpha.copy()
+        self._last_evidence = (np.array(Q, copy=True), signature, state)
+        if getattr(self, '_optimization_verbose', False):
+            print(f'    Laplace: Newton steps={state.iterations}, residual={state.mode_residual:.3g}, time={state.seconds:.1f}s', flush=True)
         return state.nll, state.gradient, state
 
     def _evidence_signature(self):
@@ -97,8 +115,8 @@ class FC_deep_classifier(SoftmaxMatrixModel):
     """
 
     def __init__(self, L, N1, D, beta=1., priors=(1., 1.), act='erf', gamma=1.,
-                 batch_size=32, *, mode_tol=1e-10, mode_maxiter=100, max_dense_size=2000):
-        self._classification_settings(D, beta, mode_tol, mode_maxiter)
+                 batch_size=32, *, mode_tol=1e-10, mode_maxiter=100, max_dense_size=2000, verbose=False):
+        self._classification_settings(D, beta, mode_tol, mode_maxiter, verbose)
         features = FCFeatures(L, N1, D - 1, priors=priors, act=act, gamma=gamma, batch_size=batch_size)
         self.gamma, self.act = gamma, act
         self._initialize(L, N1, D, D - 1, features, batch_size, max_dense_size)
@@ -118,8 +136,8 @@ class CNN_deep_classifier(SoftmaxMatrixModel):
                  stride=1, padding='valid', gamma=1., batch_size=32,
                  max_kernel_bytes=64 * 1024**2, *, pooling=None,
                  kernel_backend='auto', mode_tol=1e-10, mode_maxiter=100,
-                 max_dense_size=2000, kernel_cache=None):
-        self._classification_settings(D, beta, mode_tol, mode_maxiter)
+                 max_dense_size=2000, kernel_cache=None, verbose=False):
+        self._classification_settings(D, beta, mode_tol, mode_maxiter, verbose)
         features = CNNFeatures(L, priors=priors, act=act, gamma=gamma, mask=mask,
                                stride=stride, padding=padding, pooling=pooling,
                                kernel_backend=kernel_backend, batch_size=batch_size,

@@ -200,10 +200,10 @@ class CNN_deep:
             raise FloatingPointError("non-finite action or gradient")
         return float(value), packed
 
-    def optimize(self, Q0=1., maxiter=500, gtol=1e-6, n_restarts=2, random_state=0):
+    def optimize(self, Q0=1., maxiter=500, gtol=1e-6, n_restarts=0, random_state=0, *, verbose=False):
         """Minimize in symmetric log(Q) coordinates using analytic gradients.
 
-        Three starts by default (Q0 and two reproducible perturbed scales).
+        One start at Q0 by default; n_restarts requests additional starts.
         Use n_restarts=0 for warm starts along a channel-count/temperature scan.
         L-BFGS with line search is followed, if necessary, by a BFGS refinement
         for <=512 variables. `converged` tests the actual log-coordinate
@@ -221,7 +221,7 @@ class CNN_deep:
         self._invalidate_prediction()
         result, results = minimize_log_matrix(
             self._log_action_gradient, self._coordinates, self.L, Q0=Q0,
-            maxiter=maxiter, gtol=gtol, n_restarts=n_restarts, random_state=random_state)
+            maxiter=maxiter, gtol=gtol, n_restarts=n_restarts, random_state=random_state, verbose=verbose)
         self.optimization_results, self.result = results, result
         self.optQ, self.optR = result.Q, result.R
         self.converged = bool(result.converged)

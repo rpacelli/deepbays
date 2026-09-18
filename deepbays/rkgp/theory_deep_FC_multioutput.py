@@ -255,11 +255,11 @@ class FC_deep_multioutput:
                 likelihood = likelihood + 2 * torch.log(factor.diagonal(dim1=-2, dim2=-1)).sum() + (y * solved).sum()
         return prior + likelihood / self.N1
 
-    def optimize(self, Q0=1., maxiter=500, gtol=1e-6, n_restarts=2, random_state=0):
+    def optimize(self, Q0=1., maxiter=500, gtol=1e-6, n_restarts=0, random_state=0, *, verbose=False):
         """Minimize in symmetric log(Q) coordinates; inspect result/converged.
 
         Q0 is a positive scalar times identity or a physical SPD matrix.
-        Defaults to identity plus two reproducible restarts. For scans use
+        Defaults to one start at identity; additional starts are explicit. For scans use
         the previous optQ as Q0 and n_restarts=0. No global minimum guarantee.
         """
         self._require_preprocessed()
@@ -268,7 +268,7 @@ class FC_deep_multioutput:
             raise ValueError("no finite SPD minimizer at T=0 with rank-deficient targets and P >= N1; use positive T")
         result, attempts = minimize_log_matrix(
             self._log_action_gradient, self._coordinates, self.L, Q0=Q0,
-            maxiter=maxiter, gtol=gtol, n_restarts=n_restarts, random_state=random_state)
+            maxiter=maxiter, gtol=gtol, n_restarts=n_restarts, random_state=random_state, verbose=verbose)
         self.result, self.optimization_results = result, attempts
         self.optQ, self.optR = result.Q.copy(), result.R.copy()
         self._solution_spectrum = (result.log_eigenvalues.copy(), result.eigenvectors.copy())
