@@ -7,6 +7,9 @@ This stores draws, not the internal adaptive state required to resume a chain.
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
+import shutil
+import tempfile
 import numpy as np
 
 
@@ -49,6 +52,46 @@ class SamplingResult:
         if count == 0:
             raise ValueError('no complete chains; use chain(name, index) for partial draws')
         return self.arrays[name][:count]
+
+    def save(self, directory):
+        """Export a fully completed result once, in the existing loadable format.
+
+        Useful with sample_posterior(output_dir=None): no files are written while
+        chains run. Incomplete results are rejected. A new destination is required;
+        arrays and manifest are written in a temporary sibling, then published.
+        This saves draws, not resumable HMC state. Returns the destination Path.
+        """
+        metadata = self.metadata
+        chains, draws = metadata['config']['chains'], metadata['config']['draws']
+        if (metadata.get('status') != 'complete' or len(self.chain_info) != chains
+                or any(row.get('status') != 'complete' for row in self.chain_info)
+                or self.completed_draws != (draws,) * chains):
+            raise ValueError('only fully completed results can be exported')
+        if not self.arrays or set(self.arrays) != set(metadata['arrays']):
+            raise ValueError('missing or inconsistent sample arrays')
+        for name, value in self.arrays.items():
+            spec = metadata['arrays'][name]
+            if (not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', name)
+                    or spec['file'] != name + '.npy'
+                    or list(value.shape) != spec['shape'] or value.dtype.str != spec['dtype']
+                    or value.shape[:2] != (chains, draws)):
+                raise ValueError(f'invalid sample specification: {name}')
+        path = Path(directory)
+        if path.exists():
+            raise FileExistsError(f'export destination already exists: {path}')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(prefix='.' + path.name + '-', dir=path.parent))
+        try:
+            for name, value in self.arrays.items():
+                np.save(temporary / (name + '.npy'), value, allow_pickle=False)
+            _write_json(temporary / 'manifest.json', metadata)
+            if path.exists():
+                raise FileExistsError(path)
+            temporary.rename(path)
+        except BaseException:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
+        return path
 
     @classmethod
     def load(cls, directory):

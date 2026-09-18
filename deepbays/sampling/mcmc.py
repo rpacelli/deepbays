@@ -24,6 +24,7 @@ class SamplerConfig:
     adapting. NUTS stops trajectories adaptively up to max_tree_depth. Diagonal
     mass adaptation is the scalable default. Dense mass needs O(dimension²).
     chain_offset gives independent reproducible chain IDs across processes/GPUs.
+    cudnn_benchmark autotunes deterministic convolutions for fixed input shapes.
     """
     sampler: str = 'nuts'
     chains: int = 4
@@ -39,10 +40,13 @@ class SamplerConfig:
     adapt_mass_matrix: bool = True
     dense_mass: bool = False
     progress: bool = False
+    cudnn_benchmark: bool = False
 
     def __post_init__(self):
         if self.sampler not in ('hmc', 'nuts'):
             raise ValueError("sampler must be 'hmc' or 'nuts'")
+        if not isinstance(self.cudnn_benchmark, bool):
+            raise TypeError('cudnn_benchmark must be a bool')
         for name in ('chains', 'draws', 'max_tree_depth'):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -81,8 +85,8 @@ def _random_state(seed, device):
 
 
 @contextmanager
-def _cuda_precision(device):
-    """Avoid TF32 convolution/matmul approximations during energy evaluations."""
+def _cuda_precision(device, *, cudnn_benchmark=False):
+    """Use full precision and deterministic convolutions, with optional autotuning."""
     if device.type != 'cuda':
         yield
         return
@@ -92,7 +96,7 @@ def _cuda_precision(device):
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.benchmark = cudnn_benchmark
         yield
     finally:
         torch.backends.cuda.matmul.allow_tf32 = matmul
@@ -145,7 +149,7 @@ def sample_posterior(posterior, config=None, *, observables=None, save_weights=T
                     chains=[dict(chain=config.chain_offset+i, status='pending') for i in range(config.chains)],
                     user={} if run_metadata is None else run_metadata)
     store = SampleStore(metadata, output_dir)
-    with _cuda_precision(device):
+    with _cuda_precision(device, cudnn_benchmark=config.cudnn_benchmark):
         for chain in range(config.chains):
             chain_id = config.chain_offset+chain
             seed = config.seed+104729*chain_id

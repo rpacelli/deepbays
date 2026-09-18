@@ -81,7 +81,10 @@ class WhitenedNetwork:
                 raise ValueError('provide one prior precision per named parameter tensor')
         self.specification = [(name, p.shape, p.numel(), _positive(lam, 'prior precision'))
                               for (name, p), lam in zip(named, precisions)]
-        self.dimension = sum(size for _, _, size, _ in self.specification)
+        self._sizes = tuple(size for _, _, size, _ in self.specification)
+        self._parameter_specs = tuple((name, shape, 1. / math.sqrt(precision))
+                                      for name, shape, _, precision in self.specification)
+        self.dimension = sum(self._sizes)
         self._buffers = dict(self.network.named_buffers())
         # Inference uses only theta's gradient, not gradients of the template.
         self.network.requires_grad_(False)
@@ -90,15 +93,20 @@ class WhitenedNetwork:
         """Differentiable unwhitening; returns physical named parameter tensors."""
         if theta.ndim != 1 or theta.numel() != self.dimension:
             raise ValueError(f'theta must have shape ({self.dimension},)')
-        parameters, offset = {}, 0
-        for name, shape, size, precision in self.specification:
-            parameters[name] = theta[offset:offset+size].reshape(shape) / math.sqrt(precision)
-            offset += size
+        # One split joins parameter gradients once; independent slices each
+        # scatter their gradient into a full-sized theta in eager autograd.
+        parameters = {}
+        for (name, shape, scale), flat in zip(self._parameter_specs, theta.split(self._sizes)):
+            value = flat.reshape(shape)
+            parameters[name] = value if scale == 1. else value * scale
         return parameters
 
-    def __call__(self, theta, X):
-        return torch.func.functional_call(self.network, (self.parameters(theta), self._buffers),
+    def _forward(self, parameters, X):
+        return torch.func.functional_call(self.network, (parameters, self._buffers),
                                           (X,), strict=True)
+
+    def __call__(self, theta, X):
+        return self._forward(self.parameters(theta), X)
 
     def predict(self, theta, X, batch_size=None):
         """One draw's outputs, optionally chunked over inputs; returns a tensor.
@@ -112,7 +120,10 @@ class WhitenedNetwork:
             raise ValueError('X must be a nonempty batch')
         size = _batch_size(batch_size, len(X))
         theta = theta.to(device=self.device, dtype=self.dtype)
-        return torch.cat([self(theta, x.to(self.device)) for x in X.split(size)], dim=0)
+        parameters = self.parameters(theta)
+        if size == len(X):
+            return self._forward(parameters, X.to(self.device))
+        return torch.cat([self._forward(parameters, x.to(self.device)) for x in X.split(size)], dim=0)
 
     def metadata(self):
         return dict(kind='network', dimension=self.dimension,
@@ -175,18 +186,21 @@ class NetworkPosterior:
         self.y = _targets(y, task, len(self.X), probe.shape[1], location, dtype)
         self._compiled = None
 
-    def _chunk_loss(self, theta, x, y):
-        outputs = self.weights(theta, x.to(self.device))
+    def _chunk_loss(self, parameters, x, y):
+        outputs = self.weights._forward(parameters, x.to(self.device))
         return negative_log_likelihood(outputs, y.to(self.device), self.task, self.temperature)
 
     def _potential(self, theta):
         total = .5 * theta.square().sum()
+        parameters = self.weights.parameters(theta)
+        if self.batch_size == len(self.X):
+            return total + self._chunk_loss(parameters, self.X, self.y)
         chunks = zip(self.X.split(self.batch_size), self.y.split(self.batch_size))
         for x, y in chunks:
-            if self.checkpoint_batches and self.batch_size < len(self.X) and torch.is_grad_enabled():
-                loss = checkpoint(self._chunk_loss, theta, x, y, use_reentrant=False)
+            if self.checkpoint_batches and torch.is_grad_enabled():
+                loss = checkpoint(self._chunk_loss, parameters, x, y, use_reentrant=False)
             else:
-                loss = self._chunk_loss(theta, x, y)
+                loss = self._chunk_loss(parameters, x, y)
             total = total + loss
         return total
 

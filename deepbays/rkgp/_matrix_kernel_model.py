@@ -16,12 +16,13 @@ from ._matrix_order_parameter import (SymmetricCoordinates, matrix_prior,
 
 class CNNFeatures:
     def __init__(self, L, *, priors, act, gamma, mask, stride, padding,
-                 pooling, kernel_backend, batch_size, max_kernel_bytes):
+                 pooling, kernel_backend, batch_size, max_kernel_bytes, kernel_cache=None):
         if pooling not in (None, 'avg'):
             raise ValueError("pooling must be None or 'avg'")
         if kernel_backend not in ('auto', 'reference', 'diagonal'):
             raise ValueError("kernel_backend must be 'auto', 'reference', or 'diagonal'")
         self.L, self.pooling, self.kernel_backend = L, pooling, kernel_backend
+        self.kernel_cache = kernel_cache
         self.kwargs = dict(priors=priors, act=act, gamma=gamma, mask=mask,
                            stride=stride, padding=padding, batch_size=batch_size,
                            max_kernel_bytes=max_kernel_bytes)
@@ -39,11 +40,16 @@ class CNNFeatures:
         self.patch_shapes = tuple(layer.output_shape for layer in self.builder.layers)
         self.d = 1 if self.pooling == 'avg' else self.builder.d
         self.train = self.builder.prepare(X)
-        return self._pool(self.builder.cross(self.train))
+        return self._pool(self._blocks(self.train))
+
+    def _blocks(self, left, right=None, *, diagonal=False):
+        if self.kernel_cache is not None:
+            return self.kernel_cache.blocks(self.builder, left, right, diagonal=diagonal)
+        return self.builder.self_blocks(left) if diagonal else self.builder.cross(left, right)
 
     def test(self, X):
         prepared = self.builder.prepare(X)
-        return self._pool(self.builder.cross(prepared, self.train)), self._pool(self.builder.self_blocks(prepared))
+        return self._pool(self._blocks(prepared, self.train)), self._pool(self._blocks(prepared, diagonal=True))
 
 
 class FCFeatures:

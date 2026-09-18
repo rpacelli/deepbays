@@ -110,17 +110,19 @@ class CNN_deep_classifier(SoftmaxMatrixModel):
     Width must be at least d*(D-1), with fixed d,D in the EWA limit. For
     pooling='avg', d=1 in Q even when the pre-pooling grid has several patches.
     All inference currently uses the dense deterministic reference backend.
+    Optional kernel_cache is a deepbays.kernels.cnn_cache.CNNKernelCache shared
+    across widths; it caches prior patch blocks, never fitted Q or posteriors.
     """
 
     def __init__(self, L, Nc, D, beta=1., priors=(1., 1.), act='erf', mask=3,
                  stride=1, padding='valid', gamma=1., batch_size=32,
                  max_kernel_bytes=64 * 1024**2, *, pooling=None,
                  kernel_backend='auto', mode_tol=1e-10, mode_maxiter=100,
-                 max_dense_size=2000):
+                 max_dense_size=2000, kernel_cache=None):
         self._classification_settings(D, beta, mode_tol, mode_maxiter)
         features = CNNFeatures(L, priors=priors, act=act, gamma=gamma, mask=mask,
                                stride=stride, padding=padding, pooling=pooling,
                                kernel_backend=kernel_backend, batch_size=batch_size,
-                               max_kernel_bytes=max_kernel_bytes)
+                               max_kernel_bytes=max_kernel_bytes, kernel_cache=kernel_cache)
         self.gamma, self.act, self.pooling = gamma, act, pooling
         self._initialize(L, Nc, D, D - 1, features, batch_size, max_dense_size)
