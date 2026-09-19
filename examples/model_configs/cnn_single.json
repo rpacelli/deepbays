@@ -1,0 +1,14 @@
+{
+  "architecture": "cnn",
+  "parameters": {
+    "L": 3,
+    "Nc": 6400,
+    "T": 0.1,
+    "priors": [0.5, 0.5],
+    "act": "relu",
+    "gamma": 1.0,
+    "mask": [4, 3, 3],
+    "stride": [4, 2, 2],
+    "padding": ["valid", "same", "same"]
+  }
+}

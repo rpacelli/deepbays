@@ -60,18 +60,30 @@ class FC_deep_vanilla():
         g = torch.autograd.grad(self.ArcsinhLogEffective1DAction(logQ), logQ)[0]
         return g.item()
 
-    def optimize_ArcsinhLog(self, Qmin=1e-2, Qmax=1e3): # fast and stable also for muP.
+    def optimize_ArcsinhLog(self, Qmin=1e-2, Qmax=1e3, *, verbose=False): # fast and stable also for muP.
         """ 
         Find saddlepoint of effective action in arcsinh-log space using brentq bracket.
         Uses scalar Q, since N1 is the same across hidden layers and action is symm wrt. Qs.
         Notes: 
             - Uses arcsinh(action) to avoid nans one can encounter in log(action)
             - If this should fail (not observed so far), fall back to standard optimize() without logs.
+            - verbose=True prints scalar root evaluations and the final gradient.
         """
-        logQstar = brentq(self.ArcsinhLogEff1DActionPrime, np.log(Qmin), np.log(Qmax))
+        evaluations = 0
+        def derivative(logQ):
+            nonlocal evaluations
+            value = self.ArcsinhLogEff1DActionPrime(logQ)
+            evaluations += 1
+            if verbose:
+                print(f'  scalar solve {evaluations}: q={np.exp(logQ):.6g}, transformed derivative={value:.3g}', flush=True)
+            return value
+        logQstar = brentq(derivative, np.log(Qmin), np.log(Qmax))
         self.optQ = np.exp(logQstar) * np.ones(self.L)
-        isClose = np.isclose(self.computeActionGrad(self.optQ), np.zeros(self.L)) # tests additionally for smallness of grads, not only closeness to true root
+        gradient = self.computeActionGrad(self.optQ)
+        isClose = np.isclose(gradient, np.zeros(self.L)) # tests additionally for smallness of grads, not only closeness to true root
         self.converged = isClose.all()
+        if verbose:
+            print(f'  scalar solve finished: converged={self.converged}, max |gradient|={np.max(np.abs(gradient)):.3g}', flush=True)
 
     def optimize_smart(self, Qmin=1e-2, Qmax=1e3, showdebugplots=True):
         """ Tries arcsinh-log optimizer first, if it fails finds approx minimum by line search and initializes optimize there. Add more bells and whistles here if need arises."""

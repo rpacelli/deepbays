@@ -1,0 +1,12 @@
+{
+  "architecture": "mlp",
+  "parameters": {
+    "L": 3,
+    "N1": 64,
+    "D": 3,
+    "T": 0.2,
+    "priors": [1.0, 1.0],
+    "act": "erf",
+    "gamma": 1.0
+  }
+}

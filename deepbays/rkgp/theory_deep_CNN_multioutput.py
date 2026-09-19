@@ -59,7 +59,10 @@ class CNN_deep_multioutput(MatrixKernelModel):
         mean, cov = self._predict_gaussian(Xtest, posterior.alpha, posterior.reduction, Q, batch_size)
         self.Ypred, self.predictive_covariance = mean, cov
         self.predictive_variance = np.diagonal(cov, axis1=1, axis2=2).copy()
-        self._prediction = (mean, self.predictive_variance, Q.copy())
+        # Validation symmetrizes Q, which can change roundoff-level asymmetry
+        # in an optimizer result. Snapshot the actual public state for the
+        # stale-prediction check, not that separately normalized copy.
+        self._prediction = (mean, self.predictive_variance, self.optQ.copy())
         return (mean, cov) if return_cov else mean
 
     def averageLoss(self, Ytest, per_output=False):
