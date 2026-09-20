@@ -1,5 +1,5 @@
 # from .training import train, regLoss
-from .training import train, regLoss, test
+from .training import train, regLoss, test, trainSGD
 # from .multitask_training import multitaskMSE, multitaskTrain, multitaskLoss
 # from .training import test
 # from .training import LangevinOpt
