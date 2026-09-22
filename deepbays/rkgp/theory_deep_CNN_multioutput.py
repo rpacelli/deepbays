@@ -17,8 +17,9 @@ class CNN_deep_multioutput(CNNSpatialRate, MatrixKernelModel):
     the fixed globally averaged hidden features define the scalar kernel.
     rate_correction=False preserves the original rate. With True, a shared
     scalar multiplies the rate, using correction_weighting='label_free'
-    (default) or 'iw_dual'. Only a single pre-pooling patch is supported;
-    Q remains a full output covariance. See rate_correction_info for details.
+    (default) or 'iw_dual'. One or multiple final patches are supported,
+    including pooling='avg'. Q remains a full d*D covariance (D when pooled).
+    See rate_correction_info for the matched widths and spatial factors.
     The uncorrected action is 2I(Q) + [logdet(K_Q+T I)+y.T solve(K_Q+T I,y)]/Nc.
     """
 

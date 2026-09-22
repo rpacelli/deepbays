@@ -48,8 +48,8 @@ class CNN_deep(CNNSpatialRate):
         Output normalization, matching ConvNet (1 for standard scaling).
 
     rate_correction : bool
-        Opt-in spatial-only rate multiplier; defaults to False. Requires one
-        final patch. Nonlinear IW kernels enter, but fluctuation transmission
+        Opt-in spatial-only rate multiplier; defaults to False. Supports one
+        or multiple final patches. Nonlinear IW kernels enter, but fluctuation transmission
         and the existing EWA tail shape are unchanged.
     correction_weighting : {'label_free', 'iw_dual'}
         Isotropic training-space average (default), or fixed IW-mean duals.

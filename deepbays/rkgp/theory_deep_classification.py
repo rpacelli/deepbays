@@ -131,8 +131,9 @@ class CNN_deep_classifier(CNNSpatialRate, SoftmaxMatrixModel):
     All inference currently uses the dense deterministic reference backend.
     Optional kernel_cache is a deepbays.kernels.cnn_cache.CNNKernelCache shared
     across widths; it caches prior patch blocks, never fitted Q or posteriors.
-    rate_correction=True opts into a scalar spatial correction for one final
-    pre-pooling patch. correction_weighting='label_free' is the default;
+    rate_correction=True opts into a scalar spatial correction for one or
+    multiple final patches, including pooling='avg'.
+    correction_weighting='label_free' is the default;
     'iw_dual' uses fixed IW Laplace-mode duals in the D-1 contrast space.
     The Laplace likelihood approximation itself is unchanged.
     """
