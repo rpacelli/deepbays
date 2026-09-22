@@ -7,6 +7,7 @@ Gibbs likelihood is exp(-beta * summed_cross_entropy), and the action is
 Laplace introduces a separate, explicitly approximate likelihood integral.
 """
 
+from ._cnn_spatial_rate import CNNSpatialRate
 import numpy as np
 from ..kernels.conv_kernels import as_numpy
 from ._matrix_kernel_model import MatrixKernelModel, FCFeatures, CNNFeatures
@@ -122,7 +123,7 @@ class FC_deep_classifier(SoftmaxMatrixModel):
         self._initialize(L, N1, D, D - 1, features, batch_size, max_dense_size)
 
 
-class CNN_deep_classifier(SoftmaxMatrixModel):
+class CNN_deep_classifier(CNNSpatialRate, SoftmaxMatrixModel):
     """Equal-channel CNN classification, with flattening or global-average readout.
 
     Width must be at least d*(D-1), with fixed d,D in the EWA limit. For
@@ -130,13 +131,18 @@ class CNN_deep_classifier(SoftmaxMatrixModel):
     All inference currently uses the dense deterministic reference backend.
     Optional kernel_cache is a deepbays.kernels.cnn_cache.CNNKernelCache shared
     across widths; it caches prior patch blocks, never fitted Q or posteriors.
+    rate_correction=True opts into a scalar spatial correction for one final
+    pre-pooling patch. correction_weighting='label_free' is the default;
+    'iw_dual' uses fixed IW Laplace-mode duals in the D-1 contrast space.
+    The Laplace likelihood approximation itself is unchanged.
     """
 
     def __init__(self, L, Nc, D, beta=1., priors=(1., 1.), act='erf', mask=3,
                  stride=1, padding='valid', gamma=1., batch_size=32,
                  max_kernel_bytes=64 * 1024**2, *, pooling=None,
                  kernel_backend='auto', mode_tol=1e-10, mode_maxiter=100,
-                 max_dense_size=2000, kernel_cache=None, verbose=False):
+                 max_dense_size=2000, kernel_cache=None, verbose=False,
+                 rate_correction=False, correction_weighting='label_free'):
         self._classification_settings(D, beta, mode_tol, mode_maxiter, verbose)
         features = CNNFeatures(L, priors=priors, act=act, gamma=gamma, mask=mask,
                                stride=stride, padding=padding, pooling=pooling,
@@ -144,3 +150,4 @@ class CNN_deep_classifier(SoftmaxMatrixModel):
                                max_kernel_bytes=max_kernel_bytes, kernel_cache=kernel_cache)
         self.gamma, self.act, self.pooling = gamma, act, pooling
         self._initialize(L, Nc, D, D - 1, features, batch_size, max_dense_size)
+        self._init_rate_correction(rate_correction, correction_weighting)

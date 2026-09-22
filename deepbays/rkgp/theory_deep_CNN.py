@@ -13,6 +13,8 @@ eigenvalues, so no large autograd graph or matrix-root differentiation is
 needed by the optimizer. All theory calculations use float64 on the CPU.
 """
 
+from ._cnn_spatial_rate import CNNSpatialRate
+
 import warnings
 import numpy as np
 import torch
@@ -23,7 +25,7 @@ from ._matrix_order_parameter import (SymmetricCoordinates, matrix_prior,
 from ..kernels.conv_kernels import StackedCNNKernel, as_numpy, image_batch
 
 
-class CNN_deep:
+class CNN_deep(CNNSpatialRate):
     """MLP-style preprocess/optimize/predict interface for 2D CNNs.
 
     Parameters
@@ -45,6 +47,14 @@ class CNN_deep:
     gamma : float
         Output normalization, matching ConvNet (1 for standard scaling).
 
+    rate_correction : bool
+        Opt-in spatial-only rate multiplier; defaults to False. Requires one
+        final patch. Nonlinear IW kernels enter, but fluctuation transmission
+        and the existing EWA tail shape are unchanged.
+    correction_weighting : {'label_free', 'iw_dual'}
+        Isotropic training-space average (default), or fixed IW-mean duals.
+        See rate_correction_info after preprocess for layer factors and kappa.
+
     Biases and pooling are not part of this theory. The Wishart rate assumes
     fixed L and d as P,Nc grow. Square/quadratic and ReLU use the central EWA
     just as the vanilla MLP; accuracy for those nonlinearities is an ansatz.
@@ -52,7 +62,8 @@ class CNN_deep:
 
     def __init__(self, L, Nc, T, priors=(1., 1.), act="erf", mask=3,
                  stride=1, padding="valid", gamma=1., batch_size=32,
-                 max_kernel_bytes=64 * 1024**2):
+                 max_kernel_bytes=64 * 1024**2, *, rate_correction=False,
+                 correction_weighting="label_free"):
         self.L, self.Nc = positive_int(L, "L"), positive_int(Nc, "Nc")
         self.N1 = self.Nc
         if not np.isfinite(T) or T < 0:
@@ -71,6 +82,7 @@ class CNN_deep:
         self.solution_kind = None
         self._features = None
         self._invalidate_prediction()
+        self._init_rate_correction(rate_correction, correction_weighting)
 
     def _invalidate_prediction(self):
         self._factor = None
@@ -96,6 +108,7 @@ class CNN_deep:
 
     def preprocess(self, X, Y):
         """Cache final patch blocks and symmetric kernel coefficients once."""
+        self._clear_rate_correction()
         # A failed rebuild must not leave an old solution usable with new data.
         self._features, self.optQ, self.converged = None, None, False
         self.optR, self.result, self.solution_kind = None, None, None
@@ -131,6 +144,12 @@ class CNN_deep:
         self._torch_features = torch.from_numpy(self._features)
         self._torch_y = torch.from_numpy(self.y)
         self.finalKNNGP = self._kernel(np.eye(self.d))
+        try:
+            self._prepare_rate_correction()
+        except Exception:
+            self._features = None
+            self._spatial_rate_ready = False
+            raise
         return self
 
     def _kernel(self, Q):
@@ -174,14 +193,14 @@ class CNN_deep:
         factor = torch.linalg.cholesky(sigma)
         y = self._torch_y.to(Q.device)
         solve = torch.cholesky_solve(y[:, None], factor)[:, 0]
-        return prior + (2 * torch.log(torch.diagonal(factor)).sum() + y @ solve) / self.Nc
+        return self._rate_scale() * prior + (2 * torch.log(torch.diagonal(factor)).sum() + y @ solve) / self.Nc
 
     def computeActionGrad(self, Q):
         """Analytic Frobenius gradient with respect to symmetric physical Q."""
         self._require_preprocessed()
         Q, eigenvalues, vectors = self._validate_q(Q)
         _, gradient = self._likelihood(Q)
-        return gradient + (vectors * (eigenvalues**(1. / self.L - 1) - 1. / eigenvalues)) @ vectors.T
+        return gradient + self._rate_scale() * (vectors * (eigenvalues**(1. / self.L - 1) - 1. / eigenvalues)) @ vectors.T
 
     def _log_action_gradient(self, coordinates):
         S = self._unpack(coordinates)
@@ -191,6 +210,8 @@ class CNN_deep:
             Q = (vectors * exp_s) @ vectors.T
             value, gradient_q = self._likelihood(Q)
             prior, prior_gradient = matrix_prior(eigenvalues, self.L)
+            scale = self._rate_scale()
+            prior, prior_gradient = scale * prior, scale * prior_gradient
             value += prior
             frechet = exp_divided_differences(eigenvalues)
             gradient = vectors @ (frechet * (vectors.T @ gradient_q @ vectors)

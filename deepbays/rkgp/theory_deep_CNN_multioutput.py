@@ -1,5 +1,6 @@
 """Dense reference EWA for multi-output CNNs with a Gaussian likelihood."""
 
+from ._cnn_spatial_rate import CNNSpatialRate
 from types import SimpleNamespace
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
@@ -7,20 +8,25 @@ from ..kernels.conv_kernels import as_numpy
 from ._matrix_kernel_model import MatrixKernelModel, CNNFeatures
 
 
-class CNN_deep_multioutput(MatrixKernelModel):
+class CNN_deep_multioutput(CNNSpatialRate, MatrixKernelModel):
     """Equal-channel CNNs, square loss, and a full d*D order parameter.
 
-    Existing CNN_deep and FC_deep_multioutput are unchanged. This small-system
+    This small-system
     reference uses example-major vectors Y.reshape(-1), unlike the older
     FC output-major convention. With pooling='avg', Q has dimension D and
     the fixed globally averaged hidden features define the scalar kernel.
-    The action is 2I(Q) + [logdet(K_Q+T I)+y.T solve(K_Q+T I,y)]/Nc.
+    rate_correction=False preserves the original rate. With True, a shared
+    scalar multiplies the rate, using correction_weighting='label_free'
+    (default) or 'iw_dual'. Only a single pre-pooling patch is supported;
+    Q remains a full output covariance. See rate_correction_info for details.
+    The uncorrected action is 2I(Q) + [logdet(K_Q+T I)+y.T solve(K_Q+T I,y)]/Nc.
     """
 
     def __init__(self, L, Nc, D, T, priors=(1., 1.), act='erf', mask=3,
                  stride=1, padding='valid', gamma=1., batch_size=32,
                  max_kernel_bytes=64 * 1024**2, *, pooling=None,
-                 kernel_backend='auto', max_dense_size=2000):
+                 kernel_backend='auto', max_dense_size=2000,
+                 rate_correction=False, correction_weighting='label_free'):
         if not np.isfinite(T) or T < 0:
             raise ValueError('T must be finite and nonnegative')
         self.T, self.gamma, self.act = float(T), gamma, act
@@ -30,6 +36,7 @@ class CNN_deep_multioutput(MatrixKernelModel):
                                kernel_backend=kernel_backend, batch_size=batch_size,
                                max_kernel_bytes=max_kernel_bytes)
         self._initialize(L, Nc, D, D, features, batch_size, max_dense_size)
+        self._init_rate_correction(rate_correction, correction_weighting)
 
     def _targets(self, Y, count):
         Y = as_numpy(Y)

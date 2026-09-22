@@ -88,7 +88,18 @@ class MatrixKernelModel:
         self.batch_size = positive_int(batch_size, 'batch_size')
         self.max_dense_size = positive_int(max_dense_size, 'max_dense_size')
         self._ready = False
+        self._clear_rate_correction()
         self._reset_solution()
+
+    def _clear_rate_correction(self):
+        self.rate_multiplier = 1.
+        self.rate_correction_info = dict(enabled=False, multiplier=1.)
+
+    def _prepare_rate_correction(self):
+        pass
+
+    def _rate_scale(self):
+        return self.rate_multiplier
 
     def _reset_solution(self, keep_evidence=False):
         self.optQ = self.optR = self.result = self.solution_kind = None
@@ -102,6 +113,7 @@ class MatrixKernelModel:
 
     def preprocess(self, X, Y):
         self._ready = False
+        self._clear_rate_correction()
         self._reset_solution()
         X = self.features.inputs(X).copy()
         if len(X) * self.c > self.max_dense_size:
@@ -116,6 +128,7 @@ class MatrixKernelModel:
         self.X, self.Y, self.P = X, labels, len(X)
         for array in (self.X, self.Y, self.operator.H):
             array.setflags(write=False)
+        self._prepare_rate_correction()
         self._ready = True
         return self
 
@@ -130,6 +143,8 @@ class MatrixKernelModel:
             Q = (U * np.exp(s)) @ U.T
             nll, gradient, _ = self._evidence(Q)
             prior, prior_gradient = matrix_prior(s, self.L)
+            scale = self._rate_scale()
+            prior, prior_gradient = scale * prior, scale * prior_gradient
             dQ = (2. / self.N1) * self.operator.adjoint(gradient)
             dH = U @ (exp_divided_differences(s) * (U.T @ dQ @ U)
                       + np.diag(prior_gradient)) @ U.T
@@ -142,13 +157,13 @@ class MatrixKernelModel:
         """Scalar action, with evidence constants independent of Q omitted."""
         self._require_ready()
         Q, ev, _ = self._coordinates.validate_q(Q)
-        return matrix_prior(np.log(ev), self.L)[0] + 2 * self._evidence(Q)[0] / self.N1
+        return self._rate_scale() * matrix_prior(np.log(ev), self.L)[0] + 2 * self._evidence(Q)[0] / self.N1
 
     def computeActionGrad(self, Q):
         self._require_ready()
         Q, ev, U = self._coordinates.validate_q(Q)
         gradient = 2 * self.operator.adjoint(self._evidence(Q)[1]) / self.N1
-        return (gradient + gradient.T) / 2 + (U * (ev**(1 / self.L - 1) - 1 / ev)) @ U.T
+        return (gradient + gradient.T) / 2 + self._rate_scale() * (U * (ev**(1 / self.L - 1) - 1 / ev)) @ U.T
 
     def optimize(self, Q0=1., maxiter=300, gtol=1e-6, n_restarts=0, random_state=0, *, verbose=False):
         self._require_ready()
