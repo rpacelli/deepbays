@@ -10,6 +10,9 @@ from .theory_deep_FC_vanilla import FC_deep_vanilla
 from .theory_deep_CNN import CNN_deep, CONV_deep
 from .theory_deep_FC_multioutput import FC_deep_multioutput
 from .theory_deep_CNN_multioutput import CNN_deep_multioutput
+from .theory_deep_CNN_joint import CNN_deep_joint
+from .theory_deep_CNN_joint_multioutput import CNN_deep_joint_multioutput
+from .theory_deep_CNN_joint_classification import CNN_deep_joint_classifier
 from .theory_deep_classification import FC_deep_classifier, CNN_deep_classifier
 from .theory_deep_FC_vanilla_singleOrderParam import FC_deep_vanilla_singleOrderParam
 from .theory_deep_nonodd_nomeanfluct import FC_deep_nonodd_nomeanfluct
