@@ -19,6 +19,8 @@ class CNN_deep_joint_classifier(JointCNNModel):
     rank_policy='leading_rate' permits the deterministic covariance-tilt saddle
     below the empirical innovation rank threshold; it does not integrate the
     finite-width innovation posterior. The default is 'full_rank'.
+    allow_experimental_relu=True attempts literal ReLU G/Z path gains, without
+    a PSD guarantee; it is disabled by default.
     """
 
     def __init__(self, L, Nc, D=2, beta=1., priors=(1., 1.), act='erf', mask=3,
@@ -26,7 +28,7 @@ class CNN_deep_joint_classifier(JointCNNModel):
                  max_kernel_bytes=128*1024**2, *, pooling=None, closure='auto',
                  parameterization='innovation', kernel_backend='auto',
                  max_dense_size=2000, max_joint_coordinates=20000,
-                 mode_tol=1e-10, mode_maxiter=100, rank_policy='full_rank'):
+                 mode_tol=1e-10, mode_maxiter=100, rank_policy='full_rank', allow_experimental_relu=False):
         self.D = positive_int(D, 'D')
         if self.D < 2:
             raise ValueError("classification requires D >= 2")
@@ -41,7 +43,7 @@ class CNN_deep_joint_classifier(JointCNNModel):
             parameterization=parameterization, batch_size=batch_size,
             max_kernel_bytes=max_kernel_bytes, kernel_backend=kernel_backend,
             max_dense_size=max_dense_size, max_joint_coordinates=max_joint_coordinates,
-            rank_policy=rank_policy)
+            rank_policy=rank_policy, allow_experimental_relu=allow_experimental_relu)
 
     def _targets(self, Y, count):
         return class_labels(as_numpy(Y), count, self.D)

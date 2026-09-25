@@ -1,7 +1,8 @@
 """Fixed IW feature operators for scalar-output joint CNN saddles.
 
 linear_physical is the exact linear spatial hierarchy on its support.
-iw_path_gain is an additional nonlinear EWA closure, currently for erf/id.
+iw_path_gain is an additional nonlinear EWA closure for erf/id. ReLU requires
+an explicit experimental override and has no lifted-kernel PSD guarantee.
 It never evaluates activation derivatives or adapts gains at the saddle.
 """
 
@@ -15,17 +16,24 @@ from ._cnn_joint_rate import GatherMap, RepeatedMap, JointRate, sym
 class JointCNNFeatures:
     def __init__(self, X, *, L, widths, priors, act, gamma, mask, stride, padding,
                  pooling, closure, batch_size, max_kernel_bytes,
-                 max_joint_coordinates, kernel_backend, outputs=1, rank_policy='full_rank'):
+                 max_joint_coordinates, kernel_backend, outputs=1, rank_policy='full_rank',
+                 allow_experimental_relu=False):
         if pooling not in (None, 'avg'):
             raise ValueError("pooling must be None or 'avg'")
-        if act not in ('id', 'erf'):
-            raise ValueError("joint CNN theories currently support only 'id' and 'erf'")
+        if not isinstance(allow_experimental_relu, bool):
+            raise ValueError('allow_experimental_relu must be Boolean')
+        if act == 'relu' and not allow_experimental_relu:
+            raise ValueError("ReLU path EWA requires allow_experimental_relu=True; "
+                             "the default joint closures support only 'id' and 'erf'")
+        if act not in ('id', 'erf', 'relu'):
+            raise ValueError("joint CNN theories support 'id', 'erf', and opt-in experimental 'relu'")
+        self.allow_experimental_relu = allow_experimental_relu
         if closure == 'auto':
             closure = 'linear_physical' if act == 'id' else 'iw_path_gain'
         if closure not in ('linear_physical', 'iw_path_gain'):
             raise ValueError("closure must be 'auto', 'linear_physical', or 'iw_path_gain'")
         if closure == 'linear_physical' and act != 'id':
-            raise ValueError("linear_physical requires act='id'; use iw_path_gain for erf")
+            raise ValueError("linear_physical requires act='id'; use iw_path_gain for nonlinear activations")
         if kernel_backend not in ('auto', 'dense', 'stream'):
             raise ValueError("kernel_backend must be 'auto', 'dense', or 'stream'")
         self.budget = positive_int(max_kernel_bytes, 'max_kernel_bytes')
@@ -195,6 +203,19 @@ class JointCNNFeatures:
                 ids = self.visited[:, l]
                 lifted *= gain[..., ids[:, None], ids[None, :]]
                 covariance = self.builder._activation(lv, covariance, rv)
+            elif self.builder.act == 'relu':
+                # Deliberately use the uncentered mean-kernel ratio G/Z, not
+                # a derivative, centered kernel, or silently clipped PSD gain.
+                post = self.builder._activation(lv, covariance, rv)
+                if np.any((covariance == 0) & (post != 0)):
+                    raise FloatingPointError(
+                        'experimental ReLU path gain G/Z is undefined: '
+                        'zero preactivation covariance with nonzero ReLU covariance')
+                gain = np.zeros_like(covariance)
+                np.divide(post, covariance, out=gain, where=covariance != 0)
+                ids = self.visited[:, l]
+                lifted *= gain[..., ids[:, None], ids[None, :]]
+                covariance = post
             # For id, the activation and the gain are both trivial.
         lifted *= self.valid_paths[:, None] * self.valid_paths[None, :]
         if self.pooling == 'avg':
@@ -244,6 +265,9 @@ class JointCNNFeatures:
     @property
     def info(self):
         return dict(closure=self.closure, ranks=self.ranks, coordinates=self.coordinates,
+                    allow_experimental_relu=self.allow_experimental_relu,
+                    experimental_relu=(self.builder.act == 'relu'),
+                    path_gain_psd_guaranteed=(self.builder.act in ('id', 'erf')),
                     kernel_backend=self.backend, dense_feature_bytes=self.dense_bytes,
                     pair_workspace_estimate_bytes=self.pair_workspace_bytes,
                     batch_size=self.batch_size, pooling=self.pooling,

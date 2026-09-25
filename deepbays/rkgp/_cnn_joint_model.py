@@ -14,7 +14,8 @@ class JointCNNModel:
     def _initialize(self, L, Nc, *, priors, act, mask, stride, padding, gamma,
                     pooling, closure, parameterization, batch_size,
                     max_kernel_bytes, kernel_backend, max_dense_size,
-                    max_joint_coordinates, rank_policy='full_rank'):
+                    max_joint_coordinates, rank_policy='full_rank',
+                    allow_experimental_relu=False):
         self.L = positive_int(L, 'L')
         if np.ndim(Nc) == 0:
             widths = [positive_int(Nc, 'Nc')]*self.L
@@ -33,7 +34,7 @@ class JointCNNModel:
             pooling=pooling, closure=closure, batch_size=batch_size,
             max_kernel_bytes=max_kernel_bytes, kernel_backend=kernel_backend,
             max_joint_coordinates=max_joint_coordinates, outputs=self.c,
-            rank_policy=self.rank_policy))
+            rank_policy=self.rank_policy, allow_experimental_relu=allow_experimental_relu))
         self._ready = False
         self._reset()
 

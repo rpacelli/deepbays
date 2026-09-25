@@ -11,8 +11,10 @@ class CNN_deep_joint(JointCNNModel):
     """Joint-rate reference theory, with independent Gram/innovation solvers.
 
     closure='auto' uses the supported exact spatial rate for act='id', and
-    the experimental fixed-IW path-gain EWA closure for act='erf'. Only these
-    activations and one output are currently supported. For either closure,
+    the experimental fixed-IW path-gain EWA closure for act='erf'. ReLU may
+    be attempted with allow_experimental_relu=True: it uses the literal G/Z
+    gain, without a PSD guarantee or silent kernel repair. This override is
+    off by default. This class has one output. For either closure,
     parameterization='gram' and 'innovation' minimize the same action.
 
     Nc is a positive integer or a length-L sequence of channel widths.
@@ -27,7 +29,7 @@ class CNN_deep_joint(JointCNNModel):
                  max_kernel_bytes=128*1024**2, *, pooling=None, closure='auto',
                  parameterization='innovation', kernel_backend='auto',
                  max_dense_size=2000, max_joint_coordinates=20000,
-                 rank_policy='full_rank'):
+                 rank_policy='full_rank', allow_experimental_relu=False):
         self.D, self.c = 1, 1
         self.T = float(T)
         self._evidence_signature()
@@ -36,7 +38,7 @@ class CNN_deep_joint(JointCNNModel):
             parameterization=parameterization, batch_size=batch_size,
             max_kernel_bytes=max_kernel_bytes, kernel_backend=kernel_backend,
             max_dense_size=max_dense_size, max_joint_coordinates=max_joint_coordinates,
-            rank_policy=rank_policy)
+            rank_policy=rank_policy, allow_experimental_relu=allow_experimental_relu)
 
     def _targets(self, Y, count):
         Y = as_numpy(Y)
