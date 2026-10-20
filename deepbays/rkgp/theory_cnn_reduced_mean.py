@@ -16,6 +16,7 @@ from ..conv_geometry import positive_int
 from ..kernels.conv_kernels import image_batch
 from ._cnn_joint_model import JointCNNModel
 from ._cnn_joint_rate import RepeatedMap, sym
+from ._laplace_covariance import SeparableCovariance
 from ._softmax_laplace import fit_laplace, gaussian_softmax_statistics
 
 
@@ -73,8 +74,15 @@ class CNNReducedMean:
         self.max_evaluations = positive_int(max_evaluations, 'max_evaluations')
         f = self.spatial
         self.K_IW = f.kernel(np.eye(f.ranks[0]))
+        # The reduced CE kernel is exactly K_IW tensor Q. Validate its
+        # immutable scalar factor once, rather than diagonalizing a dense
+        # (P*c)-square Kronecker matrix at every objective evaluation.
+        if self._classification:
+            eigenvalues = np.linalg.eigvalsh(self.K_IW)
+            if eigenvalues[0] < -1e-10*max(1., float(np.max(abs(eigenvalues)))):
+                raise ValueError('training IW kernel must be positive semidefinite')
         self.K_IW.setflags(write=False)
-        _, _, iw = self._conditional(np.kron(self.K_IW, np.eye(self.c)))
+        _, _, iw = self._conditional(self._kernel(np.eye(self.c)))
         alpha = iw.alpha.reshape(model.P, self.c)
         scale = np.max(abs(alpha), initial=0.)
         normalized = alpha/scale if scale else alpha.copy()
@@ -132,6 +140,7 @@ class CNNReducedMean:
             widths=self.widths, spatial_ranks=self.spatial.ranks,
             final_patches=self.spatial.builder.d, pooling=self.spatial.pooling,
             closure=self.model.closure,
+            ce_covariance_backend='exact_separable_iw_tensor_output' if self._classification else None,
             conditional_evidence='Laplace' if self._classification else 'Gaussian',
             rate_normalization='F = negative log evidence + width-weighted product penalty',
             approximation='training-IW output reduction; not an exact marginal of joint CNNs')
@@ -148,6 +157,12 @@ class CNNReducedMean:
         nll = np.log(np.diag(factor[0])).sum()+.5*m.Y.ravel() @ alpha
         state = OptimizeResult(alpha=alpha, reduction=inverse)
         return float(nll), .5*(inverse-np.outer(alpha, alpha)), state
+
+    def _kernel(self, Q):
+        """Exact reduced covariance; CE preserves its separable factors."""
+        if self._classification:
+            return SeparableCovariance(self.K_IW, Q)
+        return np.kron(self.K_IW, Q)
 
     def _projected_widths(self, alpha):
         f = self.spatial
@@ -207,7 +222,7 @@ class CNNReducedMean:
             scales = np.exp(x)
             prior_slope = np.expm1(x/self.L)
         Q = self._Q(scales)
-        nll, gradient, _ = self._conditional(np.kron(self.K_IW, Q))
+        nll, gradient, _ = self._conditional(self._kernel(Q))
         output_gradient = np.einsum('mn,manb->ab', self.K_IW,
             gradient.reshape(self.model.P, self.c, self.model.P, self.c))
         prior = .5*np.sum(self.effective_widths*(self.L*prior_slope-x))
@@ -280,7 +295,7 @@ class CNNReducedMean:
             raise FloatingPointError('gamma product underflow/overflow; predictions disabled')
         ll = np.empty(draws)
         for i, s in enumerate(scales):
-            ll[i] = -self._conditional(np.kron(self.K_IW, self._Q(s)))[0]
+            ll[i] = -self._conditional(self._kernel(self._Q(s)))[0]
         if not np.all(np.isfinite(ll)):
             raise FloatingPointError('non-finite product evidence; predictions disabled')
         weights = np.exp(ll-logsumexp(ll))
@@ -302,7 +317,7 @@ class CNNReducedMean:
             raise RuntimeError('complete a converged reduced saddle or accepted averaging run first')
 
     def _component(self, cross, diagonal, Q):
-        _, _, state = self._conditional(np.kron(self.K_IW, Q))
+        _, _, state = self._conditional(self._kernel(Q))
         Kcross = np.kron(cross, Q)
         n = len(cross)
         mean = (Kcross @ state.alpha).reshape(n, self.c)
@@ -391,7 +406,28 @@ class CNNReducedMean:
         return result
 
     def predict_mean(self, Xtest):
-        return self.predict_statistics(Xtest, covariance='reduced', include_probabilities=False)['latent_mean']
+        if not self._classification:
+            return self.predict_statistics(Xtest, covariance='reduced', include_probabilities=False)['latent_mean']
+        # A hybrid caller needs this mean but supplies its own joint covariance.
+        # Avoid constructing a (n*c)-by-(P*c) Kronecker cross kernel and a
+        # discarded reduced covariance. This is exactly the component mean
+        # used by predict_statistics, including optional product averaging.
+        self._require_fit()
+        Xtest = image_batch(Xtest)
+        if not len(Xtest):
+            raise ValueError('provide at least one test input')
+        prepared = self.model.builder.prepare(Xtest)
+        cross = self.spatial.cross(prepared, np.eye(self.spatial.ranks[0]))
+        mean = np.zeros((len(Xtest), self.c))
+        total = 0.
+        for scales, weight in zip(self._scales, self._weights):
+            if weight == 0:
+                continue
+            Q = self._Q(scales)
+            _, _, state = self._conditional(self._kernel(Q))
+            mean += weight*((cross @ state.alpha.reshape(self.model.P, self.c)) @ Q)
+            total += weight
+        return mean/total
 
     def predict_latent(self, Xtest, *, covariance=None):
         stats = self.predict_statistics(Xtest, covariance=covariance, include_probabilities=False)

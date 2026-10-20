@@ -19,8 +19,9 @@ class CNN_deep_joint_classifier(JointCNNModel):
     rank_policy='leading_rate' permits the deterministic covariance-tilt saddle
     below the empirical innovation rank threshold; it does not integrate the
     finite-width innovation posterior. The default is 'full_rank'.
-    allow_experimental_relu=True attempts literal ReLU G/Z path gains, without
-    a PSD guarantee; it is disabled by default.
+    ReLU defaults to the coherent mean-separated iw_path_mean closure.
+    The legacy literal G/Z gain requires both closure='iw_path_gain' and
+    allow_experimental_relu=True, and has no PSD guarantee.
     """
 
     def __init__(self, L, Nc, D=2, beta=1., priors=(1., 1.), act='erf', mask=3,

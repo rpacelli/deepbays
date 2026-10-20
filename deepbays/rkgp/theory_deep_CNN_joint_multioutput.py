@@ -18,9 +18,9 @@ class CNN_deep_joint_multioutput(CNN_deep_joint):
 
     Features, pooling and prior normalization match CNN_deep_joint; both
     Gram and innovation solvers, unequal widths, and streaming are supported.
-    Identity and the frozen-IW erf closure are supported by default. The explicit
-    allow_experimental_relu=True override attempts literal ReLU G/Z gains
-    without a lifted-kernel PSD guarantee; all numerical checks remain active.
+    Identity uses compressed physical features, erf uses frozen-IW path gains,
+    and ReLU uses coherent mean-separated path features by default. The legacy
+    ReLU closure requires closure='iw_path_gain', allow_experimental_relu=True.
     """
 
     def __init__(self, L, Nc, D, T, priors=(1., 1.), act='erf', mask=3,

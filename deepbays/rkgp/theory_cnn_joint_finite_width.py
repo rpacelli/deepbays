@@ -279,6 +279,10 @@ class CNNJointFiniteWidth:
             diagonal[a] = f.block(f._subset(prepared, a), paired=True)
         return cross, diagonal
 
+    def _draw_gram(self, index):
+        """First-layer Gram for a retained integration draw."""
+        return self._first_gram([z[index] for z in self._factors])
+
     def _component(self, prepared, Q, state, cached=None):
         c, n = self.model.c, len(prepared[0])
         if cached is None:
@@ -334,7 +338,7 @@ class CNNJointFiniteWidth:
         for i, weight in enumerate(self._weights):
             if weight == 0:
                 continue
-            Q = self._first_gram([z[i] for z in self._factors])
+            Q = self._draw_gram(i)
             _, state = self._conditional(self.features.kernel(Q))
             mu, covariance = self._component(prepared, Q, state, cached)
             delta = mu-mean

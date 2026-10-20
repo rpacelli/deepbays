@@ -1,8 +1,9 @@
 """Fixed IW feature operators for scalar-output joint CNN saddles.
 
 linear_physical is the exact linear spatial hierarchy on its support.
-iw_path_gain is an additional nonlinear EWA closure for erf/id. ReLU requires
-an explicit experimental override and has no lifted-kernel PSD guarantee.
+iw_path_gain is the nonlinear EWA closure for erf/id. ReLU defaults to
+iw_path_mean, the coherent mean-separated closure with a PSD guarantee.
+The legacy ReLU G/Z closure requires an explicit experimental override.
 It never evaluates activation derivatives or adapts gains at the saddle.
 """
 
@@ -11,6 +12,7 @@ import numpy as np
 from ..conv_geometry import positive_int
 from ..kernels.conv_kernels import StackedCNNKernel
 from ._cnn_joint_rate import GatherMap, RepeatedMap, JointRate, sym
+from ._cnn_path_mean import mean_path_block
 
 
 class JointCNNFeatures:
@@ -22,18 +24,18 @@ class JointCNNFeatures:
             raise ValueError("pooling must be None or 'avg'")
         if not isinstance(allow_experimental_relu, bool):
             raise ValueError('allow_experimental_relu must be Boolean')
-        if act == 'relu' and not allow_experimental_relu:
-            raise ValueError("ReLU path EWA requires allow_experimental_relu=True; "
-                             "the default joint closures support only 'id' and 'erf'")
         if act not in ('id', 'erf', 'relu'):
-            raise ValueError("joint CNN theories support 'id', 'erf', and opt-in experimental 'relu'")
+            raise ValueError("joint CNN theories support 'id', 'erf', and 'relu'")
         self.allow_experimental_relu = allow_experimental_relu
         if closure == 'auto':
-            closure = 'linear_physical' if act == 'id' else 'iw_path_gain'
-        if closure not in ('linear_physical', 'iw_path_gain'):
-            raise ValueError("closure must be 'auto', 'linear_physical', or 'iw_path_gain'")
+            closure = {'id': 'linear_physical', 'erf': 'iw_path_gain', 'relu': 'iw_path_mean'}[act]
+        if closure not in ('linear_physical', 'iw_path_gain', 'iw_path_mean'):
+            raise ValueError("closure must be 'auto', 'linear_physical', 'iw_path_gain', or 'iw_path_mean'")
+        if act == 'relu' and closure == 'iw_path_gain' and not allow_experimental_relu:
+            raise ValueError("legacy ReLU iw_path_gain requires allow_experimental_relu=True; "
+                             "use closure='auto' for coherent mean-separated path EWA")
         if closure == 'linear_physical' and act != 'id':
-            raise ValueError("linear_physical requires act='id'; use iw_path_gain for nonlinear activations")
+            raise ValueError("linear_physical requires act='id'; use closure='auto' for nonlinear activations")
         if kernel_backend not in ('auto', 'dense', 'stream'):
             raise ValueError("kernel_backend must be 'auto', 'dense', or 'stream'")
         self.budget = positive_int(max_kernel_bytes, 'max_kernel_bytes')
@@ -55,7 +57,8 @@ class JointCNNFeatures:
         self.coordinates = sum((r*self.outputs)*(r*self.outputs+1)//2 for r in self.ranks)
         largest = max(layer.patches for layer in self.builder.layers)
         # Conservative array-workspace target, not a process RSS guarantee.
-        self.pair_workspace_bytes = 8 * 10 * (raw_dimension**2 + largest**2 + self.outputs**2-1)
+        factor = 14 if closure == 'iw_path_mean' else 10
+        self.pair_workspace_bytes = 8 * factor * (raw_dimension**2 + largest**2 + self.outputs**2-1)
         if self.pair_workspace_bytes > self.budget:
             raise MemoryError(f"one joint feature pair needs an estimated "
                               f"{self.pair_workspace_bytes/2**20:.2f} MiB workspace; "
@@ -141,7 +144,8 @@ class JointCNNFeatures:
         self._check_ranks(ranks)
         raw = ranks[0] * (p if self.pooling == 'avg' else 1)
         largest = max(layer.patches for layer in layers)
-        if 8*10*(raw**2+largest**2) > self.budget:
+        factor = 14 if self.closure == 'iw_path_mean' else 10
+        if 8*factor*(raw**2+largest**2+self.outputs**2-1) > self.budget:
             raise MemoryError("one IW path feature pair exceeds max_kernel_bytes; "
                               "increase the budget or reduce spatial size")
         self.ranks = tuple(ranks)
@@ -158,6 +162,9 @@ class JointCNNFeatures:
             visited = np.concatenate(rows)
         self.visited = np.maximum(visited, 0)
         self.valid_paths = np.all(visited >= 0, axis=1)
+        self.valid_at_layer = visited >= 0
+        for array in (self.visited, self.valid_paths, self.valid_at_layer):
+            array.setflags(write=False)
         self.path_scale = self.builder.output_scale / prod(
             layer.area*self.builder.priors[l] for l, layer in enumerate(layers) if l)
         self.path_scale /= p**2 if self.pooling == 'avg' else p
@@ -176,6 +183,8 @@ class JointCNNFeatures:
     def block(self, left, right=None, *, paired=False):
         """Features (n,m,r,r), or within-example features (n,r,r)."""
         right = left if right is None else right
+        if self.closure == 'iw_path_mean':
+            return mean_path_block(self, left, right, paired=paired)
         xp, xv = left
         yp, yv = right
         if self.closure == 'linear_physical':
@@ -266,10 +275,11 @@ class JointCNNFeatures:
     def info(self):
         return dict(closure=self.closure, ranks=self.ranks, coordinates=self.coordinates,
                     allow_experimental_relu=self.allow_experimental_relu,
-                    experimental_relu=(self.builder.act == 'relu'),
-                    path_gain_psd_guaranteed=(self.builder.act in ('id', 'erf')),
+                    experimental_relu=(self.builder.act == 'relu' and self.closure == 'iw_path_gain'),
+                    mean_lift=('coherent' if self.closure == 'iw_path_mean' else None),
+                    path_gain_psd_guaranteed=(self.builder.act in ('id', 'erf') or self.closure == 'iw_path_mean'),
                     kernel_backend=self.backend, dense_feature_bytes=self.dense_bytes,
                     pair_workspace_estimate_bytes=self.pair_workspace_bytes,
                     batch_size=self.batch_size, pooling=self.pooling,
                     physical_patch_counts=tuple(l.patches for l in self.builder.layers),
-                    raw_path_count=(len(self.visited) if self.closure == 'iw_path_gain' else None))
+                    raw_path_count=(len(self.visited) if self.closure != 'linear_physical' else None))

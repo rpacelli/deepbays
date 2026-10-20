@@ -11,10 +11,12 @@ class CNN_deep_joint(JointCNNModel):
     """Joint-rate reference theory, with independent Gram/innovation solvers.
 
     closure='auto' uses the supported exact spatial rate for act='id', and
-    the experimental fixed-IW path-gain EWA closure for act='erf'. ReLU may
-    be attempted with allow_experimental_relu=True: it uses the literal G/Z
-    gain, without a PSD guarantee or silent kernel repair. This override is
-    off by default. This class has one output. For either closure,
+    the fixed-IW path-gain EWA closure for act='erf'. ReLU uses the coherent
+    mean-separated iw_path_mean closure, with a PSD feature kernel and no
+    extra optimization coordinates. It is still a nonlinear-prior ansatz.
+    The legacy literal ReLU G/Z gain is available only with both
+    closure='iw_path_gain' and allow_experimental_relu=True.
+    This class has one output. For each closure,
     parameterization='gram' and 'innovation' minimize the same action.
 
     Nc is a positive integer or a length-L sequence of channel widths.

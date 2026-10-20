@@ -1,6 +1,6 @@
 """Exact covariance operations used by the dense Laplace solver.
 
-The FC path carries K0 and Q separately. The Newton system is still dense,
+The FC and reduced CNN paths carry K0 and Q separately. The Newton system is still dense,
 but multiplying by K and checking its positivity need not be dense operations.
 """
 import numpy as np
@@ -54,9 +54,9 @@ class DenseCovariance:
 
 
 class SeparableCovariance:
-    """Private FC covariance K0 tensor Q; K0 has already been PSD-validated.
+    """Private covariance K0 tensor Q; K0 has already been PSD-validated.
 
-    Constructed only from the immutable kernel cache of FCFeatures. Checking
+    Constructed from immutable FC or reduced-CNN kernel caches. Checking
     Q here is cheap; arbitrary user-supplied dense kernels use DenseCovariance.
     """
     def __init__(self, validated_scalar, Q):

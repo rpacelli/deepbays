@@ -80,7 +80,7 @@ class JointCNNModel:
                     empirical_singular=tuple(n < r for n, r in zip(self.widths, self.rate.ranks)),
                     dimension_width_ratios=tuple(r/n for n, r in zip(self.widths, self.rate.ranks)),
                     likelihood_dimension=self.P*self.c,
-                    nonlinear_closure=(self.closure == 'iw_path_gain' and self.builder.act != 'id'))
+                    nonlinear_closure=(self.closure in ('iw_path_gain', 'iw_path_mean') and self.builder.act != 'id'))
 
     def fluctuation_diagnostics(self, weighting='label_free'):
         """Training-only, linearized IW fluctuations; not posterior error bounds.
