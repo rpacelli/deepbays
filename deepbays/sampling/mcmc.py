@@ -5,6 +5,7 @@ prevents Pyro from retaining weight trajectories on the GPU. Our hook streams
 only the requested values in bounded chunks to CPU arrays or memory-mapped files.
 """
 from contextlib import contextmanager
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 import importlib.metadata
 import math
@@ -105,25 +106,183 @@ def _cuda_precision(device, *, cudnn_benchmark=False):
         torch.backends.cudnn.benchmark = benchmark
 
 
+class _ObservableCollector:
+    """Evaluate requested observables and buffer detached draws on their device.
+
+    One collector serves the sequential run, so a joint callable's names stay
+    fixed across chains. A successful chain empties the buffers before the next
+    starts. Collection performs no device-to-host transfer; flush transfers one
+    chunk, commits it, then invokes the user's callback exactly once.
+    """
+
+    def __init__(self, observables, save_weights):
+        observables = {} if observables is None else observables
+        self.joint = callable(observables)
+        self.observables = observables if self.joint else dict(observables)
+        if not save_weights and not self.observables:
+            raise ValueError('save weights or supply at least one observable')
+        if not self.joint:
+            self._validate_names(self.observables)
+        self.save_weights = save_weights
+        self.names = None
+        self.buffers = {}
+
+    def begin_chain(self):
+        # Retain the name schema, but reset per-chain buffer insertion order.
+        self.buffers = {}
+
+    @staticmethod
+    def _validate_names(values):
+        if not isinstance(values, Mapping):
+            raise TypeError('joint observables must return a mapping of names to tensors')
+        if any(not isinstance(name, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', name)
+               or name == 'theta' for name in values):
+            raise ValueError('observable names must be simple identifiers other than theta')
+
+    def collect(self, theta):
+        with torch.no_grad():
+            if self.joint:
+                values = self.observables(theta)
+                self._validate_names(values)
+                names = frozenset(values)
+                if not names and not self.save_weights:
+                    raise ValueError('joint observables returned no values')
+                if self.names is not None and names != self.names:
+                    raise ValueError('joint observable names must stay fixed across draws and chains')
+                self.names = names
+                values = dict(values)
+            else:
+                values = {name:fn(theta) for name,fn in self.observables.items()}
+            if self.save_weights:
+                values['theta'] = theta
+            for name, value in values.items():
+                if not torch.is_tensor(value):
+                    raise TypeError(f'observable {name} must return a torch tensor')
+                self.buffers.setdefault(name, []).append(value.detach().clone())
+
+    def flush(self, store, chain, chain_id, on_chunk):
+        if not self.buffers or not len(next(iter(self.buffers.values()))):
+            return
+        values = {name:torch.stack(tensors).cpu().numpy()
+                  for name,tensors in self.buffers.items()}
+        for tensors in self.buffers.values():
+            tensors.clear()
+        first = store.append(chain, values)
+        if on_chunk is not None:
+            on_chunk(chain_id, first, values)
+
+
+def _run_chain(posterior, config, *, pyro_mcmc, chain, device, dtype, initial,
+               store, collector, buffer_size, on_chunk, on_chain_end):
+    """Run one native Pyro chain and record its diagnostics and lifecycle.
+
+    RNG/gradient contexts also enclose user callbacks, as in the public runner.
+    On failure, only already committed chunks survive; never retry a flush or
+    callback while handling the error. The run-level precision context belongs
+    to sample_posterior, and storage/observable policy belongs to the collector.
+    """
+    metadata = store.result.metadata
+    chain_id = config.chain_offset + chain
+    seed = config.seed + 104729*chain_id
+    row = metadata['chains'][chain]
+    row.update(seed=seed, status='running')
+    collector.begin_chain()
+    warmup_end = None
+    evaluations = 0
+    start = time.perf_counter()
+
+    def hook(current_kernel, params, stage, index):
+        nonlocal warmup_end
+        if stage.startswith('Warmup'):
+            if index == config.warmup-1:
+                warmup_end = time.perf_counter()
+            return
+        collector.collect(params['theta'])
+        last_draw = index+1 == config.draws
+        if (index+1) % buffer_size == 0 or last_draw:
+            collector.flush(store, chain, chain_id, on_chunk)
+        if last_draw:
+            # Read before StreamingMCMC cleans up the kernel's diagnostics.
+            diag = current_kernel.diagnostics()
+            row.update(step_size=float(current_kernel.step_size),
+                       acceptance=float(diag['acceptance rate']),
+                       divergences=len(diag['divergences']),
+                       divergence_indices=list(diag['divergences']))
+
+    def pyro_potential(params):
+        nonlocal evaluations
+        evaluations += 1
+        return posterior.potential(params['theta'])
+
+    try:
+        with _random_state(seed, device), torch.enable_grad():
+            theta = (torch.randn(posterior.dimension, device=device, dtype=dtype)
+                     if initial is None else initial[chain].clone())
+            # Fail on an invalid initial potential/gradient before adapting.
+            probe = theta.detach().requires_grad_(True)
+            energy = posterior.potential(probe)
+            if energy.ndim != 0 or not torch.isfinite(energy):
+                raise ValueError('initial potential must be a finite scalar')
+            grad, = torch.autograd.grad(energy, probe)
+            if not torch.isfinite(grad).all():
+                raise ValueError('initial potential gradient is not finite')
+            del probe, energy, grad
+            settings = dict(potential_fn=pyro_potential, step_size=config.initial_step,
+                            target_accept_prob=config.target_accept,
+                            adapt_step_size=config.adapt_step_size,
+                            adapt_mass_matrix=config.adapt_mass_matrix, full_mass=config.dense_mass)
+            kernel = (pyro_mcmc.NUTS(max_tree_depth=config.max_tree_depth, **settings)
+                      if config.sampler == 'nuts' else
+                      pyro_mcmc.HMC(trajectory_length=config.trajectory_length, **settings))
+            setup_end = time.perf_counter()
+            run = pyro_mcmc.StreamingMCMC(
+                kernel, num_samples=config.draws, warmup_steps=config.warmup,
+                initial_params={'theta':theta}, num_chains=1, save_params=[],
+                transforms={}, hook_fn=hook, disable_progbar=not config.progress)
+            run.run()
+            collector.flush(store, chain, chain_id, on_chunk)
+            # StreamingMCMC must not have accumulated coordinate statistics.
+            if run.get_statistics():
+                raise RuntimeError('unexpected latent retention by Pyro StreamingMCMC')
+            end = time.perf_counter()
+            warmup_end = setup_end if warmup_end is None else warmup_end
+            row.update(status='complete', seconds=end-start, setup_seconds=setup_end-start,
+                       warmup_seconds=warmup_end-setup_end, sampling_seconds=end-warmup_end,
+                       potential_evaluations=evaluations)
+            store.checkpoint()
+            if on_chain_end is not None:
+                on_chain_end(store.result, chain_id)
+            del run, kernel, theta
+    except BaseException as exc:
+        # Includes KeyboardInterrupt and failures inside either user callback.
+        row.update(status='interrupted', seconds=time.perf_counter()-start,
+                   potential_evaluations=evaluations, error=f'{type(exc).__name__}: {exc}')
+        metadata['status'] = 'interrupted'
+        store.checkpoint()
+        raise
+
+
 def sample_posterior(posterior, config=None, *, observables=None, save_weights=True,
                      output_dir=None, buffer_size=16, initial=None, on_chunk=None,
                      on_chain_end=None, run_metadata=None):
     """Run independent sequential chains, returning a SamplingResult.
 
     posterior supplies potential(theta), dimension, device and dtype. Observables
-    maps names to deterministic tensor-valued functions of theta (e.g. logits on
-    a held-out batch). Set save_weights=False to retain only these observables.
+    maps names to deterministic tensor-valued functions of theta, or is one
+    callable returning a name-to-tensor mapping (to share a forward pass).
+    Set save_weights=False to retain only these observables.
     Default output is preallocated CPU memory. output_dir instead uses .npy memory
     maps and an atomic progress manifest, refusing to overwrite an existing run.
 
     Only buffer_size draws of selected tensors reside on the sampling device.
-    on_chunk(chain_index, first_draw, cpu_arrays) runs after a committed write;
-    on_chain_end(result, chain_index) can checkpoint downstream analyses.
+    on_chunk(chain_id, first_draw, cpu_arrays) runs after a committed write;
+    on_chain_end(result, chain_id) can checkpoint downstream analyses. These
+    IDs include config.chain_offset; first_draw is local to the chain.
     initial is optional shape (chains, dimension), in *whitened* coordinates.
     Callbacks/observables must not mutate the target or sampling coordinates.
     """
     try:
-        from pyro.infer.mcmc import HMC, NUTS, StreamingMCMC
+        from pyro.infer import mcmc as pyro_mcmc
     except ImportError as exc:
         raise ImportError('Install optional sampling dependencies: pip install "deepbays[sampling]"') from exc
     config = SamplerConfig() if config is None else config
@@ -131,12 +290,7 @@ def sample_posterior(posterior, config=None, *, observables=None, save_weights=T
         raise TypeError('config must be a SamplerConfig')
     if isinstance(buffer_size, bool) or not isinstance(buffer_size, int) or buffer_size < 1:
         raise ValueError('buffer_size must be a positive integer')
-    observables = {} if observables is None else dict(observables)
-    if not save_weights and not observables:
-        raise ValueError('save weights or supply at least one observable')
-    if any(not isinstance(name, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', name)
-           or name == 'theta' for name in observables):
-        raise ValueError('observable names must be simple identifiers other than theta')
+    collector = _ObservableCollector(observables, save_weights)
     device, dtype = torch.device(posterior.device), posterior.dtype
     if initial is not None:
         initial = torch.as_tensor(initial, device=device, dtype=dtype).detach().clone()
@@ -151,101 +305,10 @@ def sample_posterior(posterior, config=None, *, observables=None, save_weights=T
     store = SampleStore(metadata, output_dir)
     with _cuda_precision(device, cudnn_benchmark=config.cudnn_benchmark):
         for chain in range(config.chains):
-            chain_id = config.chain_offset+chain
-            seed = config.seed+104729*chain_id
-            row = metadata['chains'][chain]
-            row.update(seed=seed, status='running')
-            buffers = {}
-            warmup_end = None
-            evaluations = 0
-            start = time.perf_counter()
-            kernel = None
-
-            def flush():
-                if not buffers or not len(next(iter(buffers.values()))):
-                    return
-                values = {name:torch.stack(tensors).cpu().numpy() for name,tensors in buffers.items()}
-                for tensors in buffers.values():
-                    tensors.clear()
-                first = store.append(chain, values)
-                if on_chunk is not None:
-                    on_chunk(chain_id, first, values)
-
-            def update_diagnostics():
-                diag = kernel.diagnostics()
-                row.update(step_size=float(kernel.step_size), acceptance=float(diag['acceptance rate']),
-                           divergences=len(diag['divergences']), divergence_indices=list(diag['divergences']))
-
-            def hook(current_kernel, params, stage, index):
-                nonlocal warmup_end
-                if stage.startswith('Warmup'):
-                    if index == config.warmup-1:
-                        warmup_end = time.perf_counter()
-                    return
-                with torch.no_grad():
-                    theta = params['theta']
-                    values = {name:fn(theta) for name,fn in observables.items()}
-                    if save_weights:
-                        values['theta'] = theta
-                    for name, value in values.items():
-                        if not torch.is_tensor(value):
-                            raise TypeError(f'observable {name} must return a torch tensor')
-                        buffers.setdefault(name, []).append(value.detach().clone())
-                if (index+1) % buffer_size == 0 or index+1 == config.draws:
-                    flush()
-                if index+1 == config.draws:
-                    update_diagnostics()
-
-            def pyro_potential(params):
-                nonlocal evaluations
-                evaluations += 1
-                return posterior.potential(params['theta'])
-
-            try:
-                with _random_state(seed, device), torch.enable_grad():
-                    theta = (torch.randn(posterior.dimension, device=device, dtype=dtype)
-                             if initial is None else initial[chain].clone())
-                    # Fail on an invalid initial potential/gradient before adapting.
-                    probe = theta.detach().requires_grad_(True)
-                    energy = posterior.potential(probe)
-                    if energy.ndim != 0 or not torch.isfinite(energy):
-                        raise ValueError('initial potential must be a finite scalar')
-                    grad, = torch.autograd.grad(energy, probe)
-                    if not torch.isfinite(grad).all():
-                        raise ValueError('initial potential gradient is not finite')
-                    del probe, energy, grad
-                    settings = dict(potential_fn=pyro_potential, step_size=config.initial_step,
-                                    target_accept_prob=config.target_accept,
-                                    adapt_step_size=config.adapt_step_size,
-                                    adapt_mass_matrix=config.adapt_mass_matrix, full_mass=config.dense_mass)
-                    kernel = (NUTS(max_tree_depth=config.max_tree_depth, **settings) if config.sampler == 'nuts'
-                              else HMC(trajectory_length=config.trajectory_length, **settings))
-                    setup_end = time.perf_counter()
-                    run = StreamingMCMC(kernel, num_samples=config.draws, warmup_steps=config.warmup,
-                                        initial_params={'theta':theta}, num_chains=1, save_params=[],
-                                        transforms={}, hook_fn=hook, disable_progbar=not config.progress)
-                    run.run()
-                    flush()
-                    # StreamingMCMC must not have accumulated coordinate statistics.
-                    if run.get_statistics():
-                        raise RuntimeError('unexpected latent retention by Pyro StreamingMCMC')
-                    end = time.perf_counter()
-                    warmup_end = setup_end if warmup_end is None else warmup_end
-                    row.update(status='complete', seconds=end-start, setup_seconds=setup_end-start,
-                               warmup_seconds=warmup_end-setup_end, sampling_seconds=end-warmup_end,
-                               potential_evaluations=evaluations)
-                    store.checkpoint()
-                    if on_chain_end is not None:
-                        on_chain_end(store.result, chain_id)
-                    del run, kernel, theta
-            except BaseException as exc:
-                # Preserve already committed data, including KeyboardInterrupt.
-                # A failed observable/store/callback must not trigger its callback twice.
-                row.update(status='interrupted', seconds=time.perf_counter()-start,
-                           potential_evaluations=evaluations, error=f'{type(exc).__name__}: {exc}')
-                metadata['status'] = 'interrupted'
-                store.checkpoint()
-                raise
+            _run_chain(posterior, config, pyro_mcmc=pyro_mcmc, chain=chain,
+                       device=device, dtype=dtype, initial=initial, store=store,
+                       collector=collector, buffer_size=buffer_size,
+                       on_chunk=on_chunk, on_chain_end=on_chain_end)
     metadata['status'] = 'complete'
     store.checkpoint()
     return store.result

@@ -87,7 +87,7 @@ class FCNet:
             self.precisions = [1.] * (L+1) 
             
         
-    def Sequential(self):
+    def _hidden_modules(self):
         modules = []
         # build input layer
         first_layer = nn.Linear(self.N0, self.N1, bias=self.bias)
@@ -105,8 +105,21 @@ class FCNet:
                 init.normal_(layer.bias,std = 1)
             modules.append(layer)
             modules.append(Norm(np.sqrt(self.N1)))
-        # build output layer
         modules.append(make_act_module(self.act))
+        return modules
+
+    def Features(self):
+        """Hidden activations (P,N1), including the last nonlinearity.
+
+        Uses exactly the hidden architecture of Sequential(), without creating
+        a readout or applying its normalization. The empirical feature kernel
+        is Features(X) @ Features(X).T / N1. Each call builds a new module.
+        """
+        return nn.Sequential(*self._hidden_modules())
+
+    def Sequential(self):
+        modules = self._hidden_modules()
+        # build output layer
         last_layer = nn.Linear(self.N1, self.D, bias=self.bias)
         init.normal_(last_layer.weight, std = 1. / np.sqrt(self.precisions[-1]) ) 
         if self.bias:
