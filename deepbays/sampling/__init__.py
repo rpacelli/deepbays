@@ -3,6 +3,7 @@
 Install ``deepbays[sampling]``. Pyro and ArviZ are loaded only when used.
 See docs/sampling.md for priors, exact likelihood chunking, storage and diagnostics.
 See docs/tilted_prior_sampling.md for kernel-projection tails and rate estimates.
+See docs/adaptive_bridge_sampling.md for overlapping windows and measured normalization.
 """
 from .posteriors import (WhitenedNetwork, NetworkPosterior, GaussianFunctionPosterior,
                          PotentialPosterior, negative_log_likelihood, covariance_root)
@@ -15,7 +16,9 @@ from .tilted_prior import (KernelTailTarget, PowerTilt, RootTilt, UmbrellaTilt,
                            fit_umbrella_tilt, calibrate_umbrella, sample_tilted_prior)
 from .rate_functions import (central_ewa_log_normalizer, central_ewa_rate,
                              estimate_density_rate, estimate_prior_density_rate,
-                             estimate_left_probability, estimate_histogram_rate)
+                             estimate_left_probability, estimate_histogram_rate,
+                             estimate_bridge_rate)
+from .bridge import BridgeResult, sample_adaptive_bridge
 
 __all__ = ['WhitenedNetwork', 'NetworkPosterior', 'GaussianFunctionPosterior',
            'PotentialPosterior', 'negative_log_likelihood', 'covariance_root',
@@ -25,4 +28,5 @@ __all__ = ['WhitenedNetwork', 'NetworkPosterior', 'GaussianFunctionPosterior',
            'KernelTailTarget', 'PowerTilt', 'RootTilt', 'sample_tilted_prior',
            'UmbrellaTilt', 'fit_umbrella_tilt', 'calibrate_umbrella', 'estimate_histogram_rate',
            'central_ewa_log_normalizer', 'central_ewa_rate', 'estimate_density_rate',
-           'estimate_prior_density_rate', 'estimate_left_probability']
+           'estimate_prior_density_rate', 'estimate_left_probability',
+           'BridgeResult', 'sample_adaptive_bridge', 'estimate_bridge_rate']

@@ -1,8 +1,9 @@
 """Density rates with supplied or measured normalization, and central-EWA guides.
 
 The central EWA takes Q=prod_l(chi2_N/N). It is exact for the zero-bias
-identity network. Nonlinear EWA normalizers are an approximation; measured
-inverse-bias normalizers instead use the frozen-target production draws.
+identity network. Nonlinear EWA normalizers are an approximation. Measured
+normalizers use frozen-target production draws: inverse-bias averages for
+umbrellas, or prior-anchored BAR/MBAR for overlapping power/root windows.
 """
 import numpy as np
 from scipy.integrate import quad
@@ -435,3 +436,200 @@ def estimate_left_probability(q, thresholds, *, tilt, width, layers, log_normali
                                     & np.isfinite(relative_mcse)),
                 log_normalizer=float(log_normalizer),
                 uncertainty='Pointwise MCSE; excludes normalizer error and missed modes')
+
+
+# Bridge estimates use only Q and the scalar biases: the common network prior
+# cancels from every density ratio. Keep this inference separate from HMC.
+def _bridge_ess_fraction(score, step):
+    values = np.asarray(score, dtype=float)
+    weights = step*(values-values.mean())
+    return float(np.exp(2*logsumexp(weights)-logsumexp(2*weights)-np.log(values.size)))
+
+
+def _bridge_increment(score, maximum, fraction):
+    """Adaptive tempering step; importance ESS is an overlap, not mixing, measure."""
+    if _bridge_ess_fraction(score, maximum) >= fraction:
+        return float(maximum)
+    return float(brentq(lambda x: _bridge_ess_fraction(score, x)-fraction,
+                        0., maximum, xtol=1e-11))
+
+
+def _bridge_bar(delta_a, delta_b):
+    """Bennett log(Z_b/Z_a) and overlap, including unequal observation counts."""
+    from scipy.special import expit
+    a, b = np.asarray(delta_a).ravel(), np.asarray(delta_b).ravel()
+    offset = np.log(b.size/a.size)
+    def equation(ratio):
+        return expit(a-ratio+offset).sum()-expit(-b+ratio-offset).sum()
+    margin = abs(offset)+60
+    ratio = brentq(equation, min(a.min(), b.min())-margin,
+                   max(a.max(), b.max())+margin, xtol=1e-11)
+    overlap = (a.size+b.size)/(a.size*b.size)*expit(a-ratio+offset).sum()
+    return float(ratio), float(overlap)
+
+
+def _bridge_mbar(arrays, tilts, width, layers, initial=None):
+    """Standard convex MBAR likelihood, with log Z_prior=0 fixing the gauge.
+
+    Counts are actual retained draws, never ESS substituted for sample counts.
+    The latter would change the mixture being reweighted. Correlation enters
+    the joint bootstrap instead. Memory scales as windows times pooled draws.
+    """
+    from scipy.optimize import minimize, root
+    q = np.concatenate([x.ravel() for x in arrays])
+    counts = np.array([x.size for x in arrays])
+    bias = np.stack([b.log_weight(q, width=width, layers=layers) for b in tilts])
+    if not np.isfinite(bias).all():
+        raise ValueError('bridge log biases must be finite')
+    log_counts = np.log(counts)
+    centered = bias-bias.max(axis=0)
+    def objective(free):
+        z = np.r_[0., free]
+        terms = log_counts[:, None]+centered-z[:, None]
+        denominator = logsumexp(terms, axis=0)
+        responsibility = np.exp(terms-denominator)
+        return ((denominator.sum()+counts@z)/q.size,
+                (counts-responsibility.sum(axis=1))[1:]/q.size)
+    z = np.zeros(len(arrays)) if initial is None else np.asarray(initial).copy()
+    if len(arrays) > 1:
+        fit = minimize(objective, z[1:]-z[0], jac=True, method='L-BFGS-B',
+                       options=dict(gtol=1e-10, ftol=1e-14, maxiter=2000, maxls=50))
+        # A likelihood can stop changing in floating point before its score
+        # equations converge. Polish only those cases with the analytic Hessian.
+        def hessian(free):
+            terms = log_counts[:, None]+centered-np.r_[0., free][:, None]
+            r = np.exp(terms-logsumexp(terms, axis=0))
+            return (np.diag(r.sum(axis=1))-r@r.T)[1:, 1:]/q.size
+        if np.isfinite(fit.x).all() and np.max(np.abs(objective(fit.x)[1])) > 1e-8:
+            fit = root(lambda free: objective(free)[1], fit.x, jac=hessian, tol=1e-10)
+        if not np.isfinite(fit.x).all() or np.max(np.abs(objective(fit.x)[1])) > 1e-8:
+            raise RuntimeError(f'MBAR did not converge: {fit.message}')
+        z = np.r_[0., fit.x]
+    denominator = logsumexp(log_counts[:, None]+bias-z[:, None], axis=0)
+    log_w = -denominator
+    log_w -= logsumexp(log_w)  # Roundoff correction at the converged solution.
+    state_weights = np.exp(bias-z[:, None]-denominator)
+    overlap = (state_weights@state_weights.T)*counts[None, :]
+    return z, q, log_w, overlap
+
+
+def _bridge_block_length(chains):
+    """Twice a positive-sequence Q autocorrelation time, bounded by chain length."""
+    length, taus = chains.shape[1], [1.]
+    for chain in chains:
+        centered = chain-chain.mean()
+        variance = centered@centered
+        if variance == 0:
+            continue
+        fft = np.fft.rfft(centered, n=2*length)
+        acf = np.fft.irfft(fft*fft.conj())[:length]/variance
+        pairs = acf[1:1+2*((length-1)//2)].reshape(-1, 2).sum(axis=1)
+        nonpositive = np.flatnonzero(pairs <= 0)
+        stop = nonpositive[0] if len(nonpositive) else len(pairs)
+        taus.append(max(1., 1+2*pairs[:stop].sum()))
+    return min(length, max(5, int(np.ceil(2*max(taus)))))
+
+
+def _bridge_log_histogram(q, log_w, edges):
+    bins = np.searchsorted(edges, q, side='right')-1
+    bins[q == edges[-1]] = len(edges)-2
+    density = np.full(len(edges)-1, np.nan)
+    for i, width in enumerate(np.diff(edges)):
+        selected = log_w[bins == i]
+        if selected.size:
+            density[i] = logsumexp(selected)-np.log(width)
+    return density
+
+
+def estimate_bridge_rate(q_windows, tilts, edges, *, width, layers, P,
+                         bootstrap=80, block_lengths=None, chain_groups=None, seed=1234):
+    """Prior-anchored MBAR histogram with a joint chain/moving-block bootstrap.
+
+    Each Q array has shape (chain, retained draw); the first is exact iid prior
+    sampling on Q>0 and its tilt must be PowerTilt(0). All other windows must
+    use the SAME prior, data, direction and support, and a frozen PowerTilt or
+    RootTilt. Sampled normalization replaces any EWA approximation.
+
+    ``chain_groups`` pairs chain identities across sequentially warm-started
+    windows; defaults to independent windows. Prior draws are resampled iid
+    from their pooled array. Each bootstrap refits all partition functions.
+    Default time blocks are chosen from Q autocorrelation; supply longer blocks
+    when histories indicate slower modes. Chain resampling also exposes observed
+    between-chain variation, but cannot reveal unvisited modes.
+
+    Returned MCSEs include shared normalization and modal-offset covariance.
+    The modal bin is selected from prior counts/density and then held fixed.
+    Empty bins are NaN with infinite MCSE; bins empty in any bootstrap replicate
+    also have unresolved MCSE. Estimates are bin averages, without KDE. Errors
+    exclude finite-bin bias, adaptive schedule selection and missed modes; use
+    fresh production on a frozen ladder. Retain observations outside the plot.
+    """
+    width, layers, P = _integer(width, 'width'), _integer(layers, 'layers'), _integer(P, 'P')
+    bootstrap = _integer(bootstrap, 'bootstrap')
+    if bootstrap < 2:
+        raise ValueError('bootstrap must be at least two')
+    arrays = [np.asarray(x, dtype=float) for x in q_windows]
+    tilts = list(tilts)
+    if not arrays or len(arrays) != len(tilts):
+        raise ValueError('provide one tilt for every nonempty window')
+    if any(x.ndim != 2 or min(x.shape) < 1 or not np.isfinite(x).all()
+           or np.any(x <= 0) for x in arrays):
+        raise ValueError('bridge Q arrays must be finite positive (chain, draw) arrays')
+    if not isinstance(tilts[0], PowerTilt) or tilts[0].kappa != 0:
+        raise ValueError('first bridge window must be the exact prior, PowerTilt(0)')
+    if any(not isinstance(t, (PowerTilt, RootTilt)) for t in tilts):
+        raise TypeError('bridge windows require PowerTilt or RootTilt')
+    edges = np.asarray(edges, dtype=float)
+    if (edges.ndim != 1 or len(edges) < 2 or not np.isfinite(edges).all()
+            or edges[0] < 0 or np.any(np.diff(edges) <= 0)):
+        raise ValueError('edges must be finite, increasing and nonnegative')
+    lengths = ([1]+[_bridge_block_length(x) for x in arrays[1:]]
+               if block_lengths is None else list(block_lengths))
+    if len(lengths) != len(arrays):
+        raise ValueError('provide one block length per window')
+    lengths = [_integer(n, 'block length') for n in lengths]
+    lengths[0] = 1
+    groups = list(range(len(arrays))) if chain_groups is None else list(chain_groups)
+    if len(groups) != len(arrays):
+        raise ValueError('provide one chain group per window')
+    counts = {}
+    for group, array in zip(groups[1:], arrays[1:]):
+        if group in counts and counts[group] != array.shape[0]:
+            raise ValueError('windows in a chain group need matching chain counts')
+        counts[group] = array.shape[0]
+    z, q, log_w, overlap = _bridge_mbar(arrays, tilts, width, layers)
+    density = _bridge_log_histogram(q, log_w, edges)
+    rng = np.random.default_rng(seed)
+    boot_z, boot_density = [], []
+    for _ in range(bootstrap):
+        ids = {group: rng.integers(count, size=count) for group, count in counts.items()}
+        sampled = [rng.choice(arrays[0].ravel(), size=arrays[0].shape)]
+        for array, length, group in zip(arrays[1:], lengths[1:], groups[1:]):
+            chains, draws = array.shape
+            length = min(length, draws)
+            starts = rng.integers(draws, size=(chains, int(np.ceil(draws/length))))
+            indices = ((starts[..., None]+np.arange(length)) % draws).reshape(chains, -1)[:, :draws]
+            sampled.append(np.take_along_axis(array[ids[group]], indices, axis=1))
+        zi, qi, wi, _ = _bridge_mbar(sampled, tilts, width, layers, initial=z)
+        boot_z.append(zi)
+        boot_density.append(_bridge_log_histogram(qi, wi, edges))
+    boot_z, boot_density = np.asarray(boot_z), np.asarray(boot_density)
+    def error(values):
+        finite = np.isfinite(values).all(axis=0)
+        result = np.full(values.shape[1], np.inf)
+        result[finite] = values[:, finite].std(axis=0, ddof=1)
+        return result
+    mcse = error(boot_density)
+    prior_hits = np.histogram(arrays[0], edges)[0]
+    mode = int(np.argmax(prior_hits/np.diff(edges))) if prior_hits.any() else None
+    shifted = None if mode is None else -(density-density[mode])/P
+    shifted_se = None if mode is None else error((boot_density[:, mode, None]-boot_density)/P)
+    return dict(points=(edges[:-1]+edges[1:])/2, edges=edges, log_density=density,
+                rate=-density/P, relative_mcse=mcse, mcse_rate=mcse/P,
+                shifted_rate=shifted, mcse_shifted_rate=shifted_se, modal_index=mode,
+                log_normalizers=z, mcse_log_normalizers=boot_z.std(axis=0, ddof=1),
+                overlap=overlap, block_lengths=np.asarray(lengths),
+                hits_per_window=np.array([np.histogram(x, edges)[0] for x in arrays]),
+                normalizer_source='prior-anchored MBAR; conditional on Q>0',
+                uncertainty='Joint chain/block bootstrap; fixed modal bin and schedule; '
+                            'finite-bin bias, disorder variation and unvisited modes excluded')

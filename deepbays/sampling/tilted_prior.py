@@ -1,9 +1,11 @@
 """Full-path FC kernel projections under fixed scalar biases of the prior.
 
-Only the target is defined here. Ordinary Pyro HMC/NUTS, adaptation, storage,
-and diagnostics are shared with posterior sampling. EWA shapes the initial
-broad umbrella; normalization is measured separately from network samples.
+This module defines scalar biases, the network target and umbrella calibration.
+Ordinary Pyro HMC/NUTS, adaptation, storage and diagnostics are shared with
+posterior sampling. EWA shapes the initial umbrella; normalization is measured
+separately from network samples. Adaptive ladders are orchestrated in bridge.py.
 """
+from copy import copy
 from dataclasses import asdict, dataclass, replace
 import hashlib
 import math
@@ -225,15 +227,20 @@ class KernelTailTarget:
     All L hidden weight matrices are sampled jointly; there is no readout.
     Id/ReLU/Erf, a common width, zero biases, and positive layer precisions
     are supported. The NNGP denominator is fixed, not a finite-width mean fit.
+    positive_only conditions a power/root target on Q>0; umbrellas always use
+    this support. The default preserves the full-prior focused-tilt convention.
     """
 
     def __init__(self, X, bar_f, *, width, layers, activation='relu', tilt=None,
-                 precisions=1., device='cpu', dtype=torch.float64):
+                 precisions=1., device='cpu', dtype=torch.float64, positive_only=False):
         self.width, self.layers = _integer(width, 'width'), _integer(layers, 'layers')
         if activation not in ('id', 'relu', 'erf'):
             raise ValueError("activation must be 'id', 'relu', or 'erf'")
         self.activation = activation
         self.tilt = PowerTilt(0.) if tilt is None else tilt
+        if not isinstance(positive_only, (bool, np.bool_)):
+            raise TypeError('positive_only must be boolean')
+        self.positive_only = bool(positive_only)
         if not isinstance(self.tilt, (PowerTilt, RootTilt, UmbrellaTilt)):
             raise TypeError('tilt must be PowerTilt, RootTilt or UmbrellaTilt')
         if isinstance(self.tilt, PowerTilt) and self.tilt.kappa < 0:
@@ -327,11 +334,39 @@ class KernelTailTarget:
         projection = self.bar_f @ last_features
         return projection.square().sum() / (self.width * self.denominator)
 
+    def with_tilt(self, tilt, *, positive_only=None):
+        """Copy a target with a new bias, sharing its immutable model/data tensors.
+
+        This avoids reconstructing the covariance and network at every bridge
+        window. Support is inherited unless explicitly changed; umbrellas always
+        condition on Q>0. Compiled closures are cleared because they capture the
+        previous target. The original target is unchanged.
+        """
+        if not isinstance(tilt, (PowerTilt, RootTilt, UmbrellaTilt)):
+            raise TypeError('tilt must be PowerTilt, RootTilt or UmbrellaTilt')
+        if isinstance(tilt, PowerTilt) and tilt.kappa < 0:
+            if self.activation != 'id' or tilt.kappa <= -self.width/2:
+                raise ValueError('negative powers require identity and kappa > -N/2')
+        if isinstance(tilt, RootTilt) and tilt.theta >= self.root_theta_bound:
+            raise ValueError('root theta exceeds the target integrability bound')
+        if positive_only is None:
+            positive_only = self.positive_only or isinstance(self.tilt, UmbrellaTilt)
+        if not isinstance(positive_only, (bool, np.bool_)):
+            raise TypeError('positive_only must be boolean')
+        result = copy(self)
+        result.tilt, result._compiled = tilt, None
+        result.positive_only = bool(positive_only or isinstance(tilt, UmbrellaTilt))
+        return result
+
     def _potential(self, z):
         gaussian_energy = .5 * z.square().sum()
         q = self.q(z)
-        energy = gaussian_energy-self.tilt.log_weight(q, width=self.width, layers=self.layers)
-        return torch.where(q > 0, energy, torch.full_like(energy, torch.inf)) if isinstance(self.tilt, UmbrellaTilt) else energy
+        positive = self.positive_only or isinstance(self.tilt, UmbrellaTilt)
+        # Avoid differentiating log(0) in the discarded branch. Every positive
+        # Q retains its exact value and gradient; no clipping is introduced.
+        safe_q = torch.where(q > 0, q, torch.ones_like(q)) if positive else q
+        energy = gaussian_energy-self.tilt.log_weight(safe_q, width=self.width, layers=self.layers)
+        return torch.where(q > 0, energy, torch.full_like(energy, torch.inf)) if positive else energy
 
     def potential(self, z):
         return self._potential(z) if self._compiled is None else self._compiled(z)
@@ -392,7 +427,7 @@ class KernelTailTarget:
                     tilt=dict(kind=type(self.tilt).__name__, **asdict(self.tilt)),
                     dimension=self.dimension, denominator=self.denominator,
                     denominator_convention='fixed NNGP projection',
-                    support='Q>0' if isinstance(self.tilt, UmbrellaTilt) else 'Q>=0',
+                    support='Q>0' if self.positive_only or isinstance(self.tilt, UmbrellaTilt) else 'Q>=0',
                     nngp_mean_activation_overlaps=self.mean_activation_overlaps,
                     root_theta_sufficient_bound=self.root_theta_bound if math.isfinite(self.root_theta_bound) else None,
                     input_source=self.input_source, input_dimension=self.input_dimension,
@@ -536,7 +571,6 @@ def calibrate_umbrella(target, *, tilt=None, prior_q=None, prior_draws=2000,
     diagnostics; neither certifies unseen modes or arbitrary quenched directions.
     An optional output_dir saves prior draws, each native pilot and calibration.json.
     """
-    import copy
     import json
     from pathlib import Path
     import time
@@ -572,8 +606,7 @@ def calibrate_umbrella(target, *, tilt=None, prior_q=None, prior_draws=2000,
                   core=list(core), bulk_fraction=bulk_fraction, support='Q>0')
     initial = None
     for epoch in range(rounds):
-        pilot = copy.copy(target)
-        pilot.tilt, pilot._compiled = bias, None  # Compiled closures can capture the original bias.
+        pilot = target.with_tilt(bias)
         states = []
         pilot_config = replace(config, seed=config.seed+1009*(epoch+1))
         result = sample_tilted_prior(pilot, pilot_config, initial=initial,

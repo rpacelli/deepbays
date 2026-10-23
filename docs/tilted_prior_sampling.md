@@ -1,10 +1,22 @@
 # Tilted prior sampling and kernel-projection rate functions
 
 This API samples a full finite-width FC network path using the existing
-**ordinary Pyro HMC/NUTS** engine. The primary workflow is a calibrated,
-two-sided umbrella with normalization measured from network samples. Power
-and root tilts remain available as focused alternatives. Only the scalar
-potential changes; there are no custom integrators or layer updates.
+**ordinary Pyro HMC/NUTS** engine. Two workflows measure normalization from
+network samples: a calibrated two-sided umbrella and an adaptive bridge of
+overlapping power/root windows. Focused power and root tilts with supplied
+normalizers remain available. Only the scalar potential changes; there are
+no custom integrators or layer updates.
+
+| Workflow | Bias allocation | Measured normalization | Small example |
+| --- | --- | --- | --- |
+| Umbrella | Calibrate and freeze one broad `UmbrellaTilt` | Inverse-bias self-normalization | `sample_broad_prior.py` |
+| Adaptive bridge | Discover overlapping `PowerTilt` / `RootTilt` windows, then freeze the ladder | Prior-anchored BAR/MBAR | `sample_bridge_prior.py` |
+
+The [adaptive bridge guide](adaptive_bridge_sampling.md) gives the API,
+derivation, uncertainty treatment and a CPU example designed to run in under
+five minutes. Narrow windows can help when a broad umbrella mixes poorly, but
+they add repeated warmup and normalizer uncertainty; neither approach is
+universally faster.
 
 ## Primary example: calibrate, freeze, sample, plot
 
@@ -500,7 +512,7 @@ near zero, especially in mixtures of ReLU activation patterns. For probability
 calculations use the unshifted reweighted estimator above; it never uses this
 plotting offset.
 
-## Methods paragraph
+## Methods paragraph for focused tilts with supplied normalization
 
 We sampled all hidden weights jointly in whitened Gaussian coordinates from
 the tilted prior using ordinary Pyro HMC and PyTorch automatic differentiation.
@@ -533,7 +545,8 @@ The former `BroadTilt` and `fit_broad_tilt` have moved out of deepbays to
 the historical right-only bias, guard=1, positional arguments and old fitter.
 Active development scripts import it locally; archived source snapshots are
 unchanged. Older saved bias dictionaries still reconstruct with the wrapper.
-New manuscript runs should use `UmbrellaTilt` and its single calibrator.
+New manuscript runs can use `UmbrellaTilt` and its single calibrator, or the
+adaptive bridge workflow with power/root windows.
 The existing power/root API and example are unchanged. All umbrella quantities
 refer to the prior **conditional on Q>0**; the possible ReLU atom is excluded.
 
@@ -734,8 +747,8 @@ for all disorder realizations or the largest requested N,L.
 Prepared covariance inputs, per-layer signed projections and Gaussian energies,
 and deterministic mean-activation overlap metadata remain supported. Existing
 `prefix_projection` observables are inexpensive diagnostics, not the paper's
-nonlinear layer factors q_l. Exact layer factors and more elaborate adaptive
-algorithms are outside this implementation.
+nonlinear layer factors q_l. Exact layer factors and adaptive bias surfaces
+are outside this implementation.
 
 A methods paragraph can remain short:
 
