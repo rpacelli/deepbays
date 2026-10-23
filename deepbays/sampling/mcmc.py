@@ -173,7 +173,7 @@ class _ObservableCollector:
 
 
 def _run_chain(posterior, config, *, pyro_mcmc, chain, device, dtype, initial,
-               store, collector, buffer_size, on_chunk, on_chain_end):
+               store, collector, buffer_size, on_chunk, on_chain_end, on_chain_state):
     """Run one native Pyro chain and record its diagnostics and lifecycle.
 
     RNG/gradient contexts also enclose user callbacks, as in the public runner.
@@ -188,11 +188,12 @@ def _run_chain(posterior, config, *, pyro_mcmc, chain, device, dtype, initial,
     row.update(seed=seed, status='running')
     collector.begin_chain()
     warmup_end = None
+    final_state = None
     evaluations = 0
     start = time.perf_counter()
 
     def hook(current_kernel, params, stage, index):
-        nonlocal warmup_end
+        nonlocal warmup_end, final_state
         if stage.startswith('Warmup'):
             if index == config.warmup-1:
                 warmup_end = time.perf_counter()
@@ -202,6 +203,9 @@ def _run_chain(posterior, config, *, pyro_mcmc, chain, device, dtype, initial,
         if (index+1) % buffer_size == 0 or last_draw:
             collector.flush(store, chain, chain_id, on_chunk)
         if last_draw:
+            if on_chain_state is not None:
+                # One independent CPU copy, not a retained weight trajectory.
+                final_state = params['theta'].detach().to(device='cpu', copy=True)
             # Read before StreamingMCMC cleans up the kernel's diagnostics.
             diag = current_kernel.diagnostics()
             row.update(step_size=float(current_kernel.step_size),
@@ -252,9 +256,11 @@ def _run_chain(posterior, config, *, pyro_mcmc, chain, device, dtype, initial,
             store.checkpoint()
             if on_chain_end is not None:
                 on_chain_end(store.result, chain_id)
+            if on_chain_state is not None:
+                on_chain_state(chain_id, final_state)
             del run, kernel, theta
     except BaseException as exc:
-        # Includes KeyboardInterrupt and failures inside either user callback.
+        # Includes KeyboardInterrupt and failures inside user callbacks.
         row.update(status='interrupted', seconds=time.perf_counter()-start,
                    potential_evaluations=evaluations, error=f'{type(exc).__name__}: {exc}')
         metadata['status'] = 'interrupted'
@@ -264,7 +270,7 @@ def _run_chain(posterior, config, *, pyro_mcmc, chain, device, dtype, initial,
 
 def sample_posterior(posterior, config=None, *, observables=None, save_weights=True,
                      output_dir=None, buffer_size=16, initial=None, on_chunk=None,
-                     on_chain_end=None, run_metadata=None):
+                     on_chain_end=None, run_metadata=None, on_chain_state=None):
     """Run independent sequential chains, returning a SamplingResult.
 
     posterior supplies potential(theta), dimension, device and dtype. Observables
@@ -278,6 +284,10 @@ def sample_posterior(posterior, config=None, *, observables=None, save_weights=T
     on_chunk(chain_id, first_draw, cpu_arrays) runs after a committed write;
     on_chain_end(result, chain_id) can checkpoint downstream analyses. These
     IDs include config.chain_offset; first_draw is local to the chain.
+    on_chain_state(chain_id, final_cpu_tensor) receives one copied final state
+    after the completed chain is committed and on_chain_end has returned.
+    It enables initialization of a fresh run without saving weight histories;
+    adaptation and RNG state are not included, so this is not exact resumption.
     initial is optional shape (chains, dimension), in *whitened* coordinates.
     Callbacks/observables must not mutate the target or sampling coordinates.
     """
@@ -308,7 +318,8 @@ def sample_posterior(posterior, config=None, *, observables=None, save_weights=T
             _run_chain(posterior, config, pyro_mcmc=pyro_mcmc, chain=chain,
                        device=device, dtype=dtype, initial=initial, store=store,
                        collector=collector, buffer_size=buffer_size,
-                       on_chunk=on_chunk, on_chain_end=on_chain_end)
+                       on_chunk=on_chunk, on_chain_end=on_chain_end,
+                       on_chain_state=on_chain_state)
     metadata['status'] = 'complete'
     store.checkpoint()
     return store.result

@@ -11,10 +11,11 @@ from .storage import SamplingResult
 from .predictive import (classification_statistics, logit_contrasts,
                          sample_categorical_labels, iter_predictions)
 from .diagnostics import diagnostics_and_mcse
-from .tilted_prior import KernelTailTarget, PowerTilt, RootTilt, sample_tilted_prior
+from .tilted_prior import (KernelTailTarget, PowerTilt, RootTilt, UmbrellaTilt,
+                           fit_umbrella_tilt, calibrate_umbrella, sample_tilted_prior)
 from .rate_functions import (central_ewa_log_normalizer, central_ewa_rate,
                              estimate_density_rate, estimate_prior_density_rate,
-                             estimate_left_probability)
+                             estimate_left_probability, estimate_histogram_rate)
 
 __all__ = ['WhitenedNetwork', 'NetworkPosterior', 'GaussianFunctionPosterior',
            'PotentialPosterior', 'negative_log_likelihood', 'covariance_root',
@@ -22,5 +23,6 @@ __all__ = ['WhitenedNetwork', 'NetworkPosterior', 'GaussianFunctionPosterior',
            'classification_statistics', 'logit_contrasts', 'sample_categorical_labels',
            'iter_predictions', 'diagnostics_and_mcse',
            'KernelTailTarget', 'PowerTilt', 'RootTilt', 'sample_tilted_prior',
+           'UmbrellaTilt', 'fit_umbrella_tilt', 'calibrate_umbrella', 'estimate_histogram_rate',
            'central_ewa_log_normalizer', 'central_ewa_rate', 'estimate_density_rate',
            'estimate_prior_density_rate', 'estimate_left_probability']

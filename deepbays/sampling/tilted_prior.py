@@ -1,9 +1,10 @@
-"""Full-path FC kernel projections under power or root tilts of the prior.
+"""Full-path FC kernel projections under fixed scalar biases of the prior.
 
 Only the target is defined here. Ordinary Pyro HMC/NUTS, adaptation, storage,
-and diagnostics are shared with posterior sampling. EWA never enters U(z).
+and diagnostics are shared with posterior sampling. EWA shapes the initial
+broad umbrella; normalization is measured separately from network samples.
 """
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import math
 
@@ -85,6 +86,99 @@ class RootTilt:
         return width * self.theta * root
 
 
+@dataclass(frozen=True)
+class UmbrellaTilt:
+    """Bounded scalar umbrella, conditioned on Q>0.
+
+    Enable either or both tails with left/right. Each branch and its first
+    derivative vanish at Q=1; smooth coordinate caps keep the bias bounded.
+    The reporting endpoints lower/upper are not hard support boundaries.
+    Calibration learns left_scale/left_offset and/or slope/offset; optional
+    curvature is a fixed right-branch correction, zero by default.
+    Use calibrate_umbrella, then freeze the bias for fresh production chains.
+    """
+    slope: float = 0.
+    offset: float = -1.
+    upper: float = 5.
+    guard: float = .5
+    transition: float = .25
+    curvature: float = 0.
+    lower: float = .2
+    left_guard: float = .1
+    left_scale: float = 1.
+    left_offset: float = -1.
+    left: bool = True
+    right: bool = True
+
+    def __post_init__(self):
+        for name in ('left', 'right'):
+            if not isinstance(getattr(self, name), (bool, np.bool_)):
+                raise ValueError('left/right must be boolean tail switches')
+            object.__setattr__(self, name, bool(getattr(self, name)))
+        if not (self.left or self.right):
+            raise ValueError('enable at least one umbrella tail; use PowerTilt(0) for the prior')
+        for name, value in asdict(self).items():
+            if name not in ('left', 'right'):
+                if not np.isfinite(value):
+                    raise ValueError('umbrella coefficients must be finite')
+                object.__setattr__(self, name, float(value))
+        if (self.upper <= 1 or self.guard <= 0 or self.transition <= 0
+                or not 0 < self.left_guard < self.lower < 1 or self.left_scale < 0):
+            raise ValueError('require upper>1, positive guard/transition, '
+                             '0<left_guard<lower<1 and left_scale>=0')
+
+    def log_weight(self, q, *, width, layers):
+        if not torch.is_tensor(q):
+            q = np.asarray(q, dtype=float)
+        value = q*0.
+        if self.left:
+            value = value+self._left_log_weight(q, width=width, layers=layers)
+        if self.right:
+            value = value+self._right_log_weight(q, width=width, layers=layers)
+        return value
+
+    def _right_log_weight(self, q, *, width, layers):
+        tensor = torch.is_tensor(q)
+        if not tensor:
+            q = np.asarray(q, dtype=float)
+        positive = (lambda x: x.clamp_min(0)) if tensor else (lambda x: np.maximum(x, 0))
+        expm1, log1p = (torch.expm1, torch.log1p) if tensor else (np.expm1, np.log1p)
+        excess = positive(q-self.upper)
+        saturated = self.upper-self.guard*expm1(-excess/self.guard)
+        coordinate = torch.where(q > self.upper, saturated, q) if tensor else np.where(q > self.upper, saturated, q)
+        r = positive(coordinate-1)
+        log_root = log1p(r)/layers
+        rate = width*layers/2*(expm1(log_root)-log_root)
+        hinge = r+self.transition*expm1(-r/self.transition)
+        gate = r.square()/(r.square()+self.transition**2) if tensor else r*r/(r*r+self.transition**2)
+        raw = rate+self.slope*hinge+self.offset*gate
+        if self.curvature != 0:
+            # A unit-height bump fills a poorly visited connecting region.
+            # Its value and derivative vanish at both reporting endpoints.
+            t = (r/(self.upper-1)).clamp_max(1) if tensor else np.minimum(r/(self.upper-1), 1)
+            raw = raw+self.curvature*16*t*t*(1-t)*(1-t)
+        return (torch.logaddexp(raw, torch.zeros_like(raw)) if tensor
+                else np.logaddexp(raw, 0.))-math.log(2.)
+
+    def _left_log_weight(self, q, *, width, layers):
+        tensor = torch.is_tensor(q)
+        if not tensor:
+            q = np.asarray(q, dtype=float)
+        below = (q-self.lower).clamp_max(0) if tensor else np.minimum(q-self.lower, 0)
+        expm1, log = (torch.expm1, torch.log) if tensor else (np.expm1, np.log)
+        capped = self.lower+self.left_guard*expm1(below/self.left_guard)
+        coordinate = torch.where(q < self.lower, capped, q) if tensor else np.where(q < self.lower, capped, q)
+        coordinate = coordinate.clamp_max(1) if tensor else np.minimum(coordinate, 1)
+        y = log(coordinate)/layers
+        rate = width*layers/2*(expm1(y)-y)
+        distance = 1-coordinate
+        gate = distance**2/(distance**2+self.transition**2)
+        raw = self.left_scale*rate+self.left_offset*gate
+        left = ((torch.logaddexp(raw, torch.zeros_like(raw)) if tensor
+                 else np.logaddexp(raw, 0.))-math.log(2.))
+        return left
+
+
 def _kernel_map(k, activation):
     """Gaussian activation second moment, including zero-variance rows.
 
@@ -140,8 +234,8 @@ class KernelTailTarget:
             raise ValueError("activation must be 'id', 'relu', or 'erf'")
         self.activation = activation
         self.tilt = PowerTilt(0.) if tilt is None else tilt
-        if not isinstance(self.tilt, (PowerTilt, RootTilt)):
-            raise TypeError('tilt must be PowerTilt or RootTilt')
+        if not isinstance(self.tilt, (PowerTilt, RootTilt, UmbrellaTilt)):
+            raise TypeError('tilt must be PowerTilt, RootTilt or UmbrellaTilt')
         if isinstance(self.tilt, PowerTilt) and self.tilt.kappa < 0:
             if activation != 'id':
                 raise ValueError('negative power tilts are supported only for identity; '
@@ -163,7 +257,11 @@ class KernelTailTarget:
         self.input_source, self.covariance_roundoff_tolerance = 'raw data: XX.T/input_dimension', None
         factor = X / math.sqrt(self.input_dimension)
         kernel = factor @ factor.T
+        self.mean_activation_overlaps = []
         for lam in self.precisions:
+            if activation == 'relu':
+                mean = np.sqrt(np.maximum(np.diag(kernel)/lam, 0.))
+                self.mean_activation_overlaps.append(float(f@mean/(np.linalg.norm(f)*np.linalg.norm(mean))))
             kernel = _kernel_map(kernel / lam, activation)
         self.denominator = float(f @ kernel @ f)
         if activation == 'id':
@@ -231,8 +329,9 @@ class KernelTailTarget:
 
     def _potential(self, z):
         gaussian_energy = .5 * z.square().sum()
-        log_bias = self.tilt.log_weight(self.q(z), width=self.width, layers=self.layers)
-        return gaussian_energy - log_bias
+        q = self.q(z)
+        energy = gaussian_energy-self.tilt.log_weight(q, width=self.width, layers=self.layers)
+        return torch.where(q > 0, energy, torch.full_like(energy, torch.inf)) if isinstance(self.tilt, UmbrellaTilt) else energy
 
     def potential(self, z):
         return self._potential(z) if self._compiled is None else self._compiled(z)
@@ -254,9 +353,13 @@ class KernelTailTarget:
         traces = torch.stack([features.square().sum() / self.width for features in path])
         layer_energies = torch.stack([
             .5 * weights.square().sum() for weights in z.split(self.model._sizes)])
-        return dict(Q=projections[-1], prefix_projection=projections,
-                    signed_projection=signed_projections, kernel_trace=traces,
-                    gaussian_energy=layer_energies)
+        values = dict(Q=projections[-1], prefix_projection=projections,
+                      signed_projection=signed_projections, kernel_trace=traces,
+                      gaussian_energy=layer_energies)
+        if isinstance(self.tilt, UmbrellaTilt):
+            values['log_bias'] = self.tilt.log_weight(values['Q'], width=self.width, layers=self.layers)
+            values['inverse_bias'] = torch.exp(-values['log_bias'])
+        return values
 
     def initial_states(self, chains=4, seed=0, chain_offset=0):
         """Independent prior starts, retried only if the target or gradient is invalid.
@@ -289,6 +392,8 @@ class KernelTailTarget:
                     tilt=dict(kind=type(self.tilt).__name__, **asdict(self.tilt)),
                     dimension=self.dimension, denominator=self.denominator,
                     denominator_convention='fixed NNGP projection',
+                    support='Q>0' if isinstance(self.tilt, UmbrellaTilt) else 'Q>=0',
+                    nngp_mean_activation_overlaps=self.mean_activation_overlaps,
                     root_theta_sufficient_bound=self.root_theta_bound if math.isfinite(self.root_theta_bound) else None,
                     input_source=self.input_source, input_dimension=self.input_dimension,
                     covariance_roundoff_tolerance=self.covariance_roundoff_tolerance,
@@ -297,7 +402,7 @@ class KernelTailTarget:
 
 
 def sample_tilted_prior(target, config=None, *, initial=None, output_dir=None,
-                        buffer_size=16, on_chain_end=None):
+                        buffer_size=16, on_chain_end=None, on_chain_state=None):
     """Standard Pyro HMC by default; stream Q and layer diagnostics, not weights."""
     if not isinstance(target, KernelTailTarget):
         raise TypeError('target must be KernelTailTarget')
@@ -308,4 +413,207 @@ def sample_tilted_prior(target, config=None, *, initial=None, output_dir=None,
         initial = target.initial_states(config.chains, config.seed, config.chain_offset)
     return sample_posterior(target, config, initial=initial, observables=target.observables,
                             save_weights=False, output_dir=output_dir, buffer_size=buffer_size,
-                            on_chain_end=on_chain_end)
+                            on_chain_end=on_chain_end, on_chain_state=on_chain_state)
+
+
+def fit_umbrella_tilt(batches, tilt, *, width, layers, core=(.8, 1.2),
+                      bulk_fraction=.3, damping=.7):
+    """Fit the enabled tails' coefficients to discarded-pilot occupancy.
+
+    batches is a sequence of (Q samples, frozen bias) pairs; bias=None denotes
+    independent positive prior samples. A weighted central count anchors each
+    batch, so no EWA normalizer or fitted partition function is needed. Each
+    enabled side receives an equal share of the requested non-core mass,
+    approximately flat in Q; the core retains the prior shape. Only observed
+    bins are fitted. Disabled branches and their coefficients remain unchanged.
+
+    Least squares is regularized and bounded. Importance-weight concentration
+    on the last usable batch further damps a large update. This is a calibration
+    heuristic, not a convergence or unvisited-support certificate. Production
+    must use a frozen bias and fresh warmup, excluding every input batch here.
+    """
+    from scipy.optimize import least_squares
+    from scipy.special import logsumexp
+    if not isinstance(tilt, UmbrellaTilt):
+        raise TypeError('tilt must be UmbrellaTilt')
+    width, layers = _integer(width, 'width'), _integer(layers, 'layers')
+    lo, hi = map(float, core)
+    if not (tilt.lower < lo < 1 < hi < tilt.upper and 0 < bulk_fraction < 1
+            and 0 < damping <= 1):
+        raise ValueError('need lower < core[0] < 1 < core[1] < upper, and valid fractions')
+    edges = np.r_[np.linspace(tilt.lower, lo, 9)[:-1] if tilt.left else [],
+                  np.linspace(lo, hi, 9),
+                  np.linspace(hi, tilt.upper, 13)[1:] if tilt.right else []]
+    centers, widths = (edges[:-1]+edges[1:])/2, np.diff(edges)
+    counts, denominators, skipped, used = np.zeros(len(centers)), [], [], []
+    for index, (samples, bias) in enumerate(batches):
+        q = np.asarray(samples, dtype=float).reshape(-1)
+        if q.size < 32 or not np.isfinite(q).all() or np.any(q <= 0):
+            raise ValueError('each calibration batch needs >=32 finite positive Q draws')
+        if bias is not None and not isinstance(bias, UmbrellaTilt):
+            raise TypeError('calibration bias must be a frozen umbrella or None for prior draws')
+        anchor = (q >= lo) & (q <= hi)
+        if anchor.sum() < 10:
+            skipped.append(index)
+            continue
+        log_anchor = (np.zeros(anchor.sum()) if bias is None else
+                      -bias.log_weight(q[anchor], width=width, layers=layers))
+        log_b = np.zeros_like(centers) if bias is None else bias.log_weight(centers, width=width, layers=layers)
+        # E sum_core exp(-B_j) = M_j * P_prior(core) / Z_j.
+        denominators.append(logsumexp(log_anchor)+log_b)
+        counts += np.histogram(q, edges)[0]
+        used.append((q, bias))
+    keep = counts >= 5
+    report = dict(edges=edges.tolist(), counts=counts.tolist(), populated=keep.tolist(),
+                  skipped_batches=skipped, requested_bulk_fraction=bulk_fraction,
+                  core=[lo, hi], previous=asdict(tilt))
+    if (not used or keep.sum() < 8
+            or tilt.left and np.sum(keep & (centers < 1)) < 3
+            or tilt.right and np.sum(keep & (centers > 1)) < 3):
+        return tilt, dict(report, fitted=False, reason='insufficient observed bins or core visits',
+                          fitted_bias=asdict(tilt))
+    log_ratio = np.full(len(centers), np.nan)
+    log_ratio[keep] = np.log(counts[keep]/widths[keep])-logsumexp(denominators, axis=0)[keep]
+    # Preserve the prior shape in the core; request flat allocations on each side.
+    tail_mass = (1-bulk_fraction)/(int(tilt.left)+int(tilt.right))
+    log_allocation = np.where(centers < lo, np.log(tail_mass/(lo-tilt.lower)),
+                             np.log(tail_mass/(tilt.upper-hi)))
+    middle = (centers >= lo) & (centers <= hi)
+    log_allocation[middle] = np.log(bulk_fraction)+log_ratio[middle]
+    names = (('left_scale', 'left_offset') if tilt.left else ()) + (('slope', 'offset') if tilt.right else ())
+    initial = np.array([getattr(tilt, name) for name in names])
+    limits = dict(left_scale=.6, left_offset=6., slope=max(2., .08*width), offset=6.)
+    steps = np.array([limits[name] for name in names])
+    lower, upper = initial-steps, initial+steps
+    if tilt.left:
+        lower[0] = max(0., lower[0])
+    def construct(parameters):
+        return replace(tilt, **dict(zip(names, parameters[:len(names)])))
+    confidence = np.sqrt(np.minimum(counts[keep], 50)/50)
+    def residual(parameters):
+        predicted = construct(parameters).log_weight(centers[keep], width=width, layers=layers)
+        mismatch = predicted+log_ratio[keep]-log_allocation[keep]-parameters[-1]
+        return np.r_[confidence*mismatch, .2*(parameters[:-1]-initial)/steps]
+    fit = least_squares(residual, np.r_[initial, -np.log(bulk_fraction)],
+                        bounds=(np.r_[lower, -np.inf], np.r_[upper, np.inf]), max_nfev=200)
+    if not fit.success:
+        return tilt, dict(report, fitted=False, reason='least-squares fit did not converge',
+                          fitted_bias=asdict(tilt))
+    latest, _ = used[-1]
+    old_b = tilt.log_weight(latest, width=width, layers=layers)
+    fraction = damping
+    for _ in range(9):
+        learned = construct(initial+fraction*(fit.x[:-1]-initial))
+        change = learned.log_weight(latest, width=width, layers=layers)-old_b
+        normalized = np.exp(change-logsumexp(change))
+        kish = float(1/np.sum(normalized**2))
+        if kish >= .25*latest.size:
+            break
+        if _ < 8:
+            fraction *= .5
+    return learned, dict(report, fitted=True, reason=None, damping_used=float(fraction),
+        update_weight_kish_ess=kish, fitted_bias=asdict(learned),
+        log_prior_to_core=[float(x) if np.isfinite(x) else None for x in log_ratio],
+        log_allocation=[float(x) if np.isfinite(x) else None for x in log_allocation],
+        observed_fit_range=[float(centers[keep].min()), float(centers[keep].max())])
+
+
+def calibrate_umbrella(target, *, tilt=None, prior_q=None, prior_draws=2000,
+                       rounds=3, config=None, core=(.8, 1.2), bulk_fraction=.3,
+                       output_dir=None):
+    """Learn and validate an umbrella bias in a fixed sampling budget.
+
+    Returns (immutable_bias, report). The input target is not mutated. A fit
+    to iid prior samples initializes the EWA coefficients; discarded HMC
+    batches refine them. Every batch uses a fresh kernel and warmup. The last
+    batch evaluates the returned bias without updating it afterward. Final
+    states may initialize the next calibration batch, but production should
+    use new chains/warmup and exclude all calibration draws.
+
+    config controls each pilot (default: 2 chains, 150 draws, 80 warmup).
+    rounds is a hard number of pilot batches, not a convergence requirement.
+    coverage_ok reports observed coarse-bin coverage, separately from chain
+    diagnostics; neither certifies unseen modes or arbitrary quenched directions.
+    An optional output_dir saves prior draws, each native pilot and calibration.json.
+    """
+    import copy
+    import json
+    from pathlib import Path
+    import time
+    from .diagnostics import diagnostics_and_mcse
+    started = time.perf_counter()
+    if not isinstance(target, KernelTailTarget):
+        raise TypeError('target must be KernelTailTarget')
+    rounds, prior_draws = _integer(rounds, 'rounds'), _integer(prior_draws, 'prior_draws')
+    config = (SamplerConfig(sampler='hmc', chains=2, draws=150, warmup=80,
+              trajectory_length=1.5, target_accept=.9) if config is None else config)
+    if not isinstance(config, SamplerConfig) or config.chains < 2 or config.draws < 16 or config.warmup < 1:
+        raise ValueError('calibration needs >=2 chains, >=16 draws and fresh positive warmup')
+    bias = (target.tilt if isinstance(target.tilt, UmbrellaTilt) else UmbrellaTilt()) if tilt is None else tilt
+    if not isinstance(bias, UmbrellaTilt):
+        raise TypeError('tilt must be UmbrellaTilt')
+    if prior_q is None:
+        generator = torch.Generator(device=target.device).manual_seed(config.seed+811)
+        with torch.no_grad():
+            prior_q = np.array([float(target.q(torch.randn(target.dimension,
+                generator=generator, device=target.device, dtype=target.dtype))) for _ in range(prior_draws)])
+    prior_q = np.asarray(prior_q, dtype=float)
+    if prior_q.ndim != 1 or not np.isfinite(prior_q).all() or np.any(prior_q < 0):
+        raise ValueError('prior_q must be finite nonnegative iid prior draws')
+    batches = [(prior_q[prior_q > 0], None)]
+    bias, initial_fit = fit_umbrella_tilt(batches, bias, width=target.width,
+        layers=target.layers, core=core, bulk_fraction=bulk_fraction)
+    folder = Path(output_dir) if output_dir is not None else None
+    if folder is not None:
+        folder.mkdir(parents=True, exist_ok=False)
+        np.save(folder/'prior_Q.npy', prior_q, allow_pickle=False)
+    report = dict(initial_fit=initial_fit, stages=[], prior_draws=len(prior_q),
+                  zero_prior_draws=int(np.sum(prior_q == 0)), source_target=target.metadata(),
+                  core=list(core), bulk_fraction=bulk_fraction, support='Q>0')
+    initial = None
+    for epoch in range(rounds):
+        pilot = copy.copy(target)
+        pilot.tilt, pilot._compiled = bias, None  # Compiled closures can capture the original bias.
+        states = []
+        pilot_config = replace(config, seed=config.seed+1009*(epoch+1))
+        result = sample_tilted_prior(pilot, pilot_config, initial=initial,
+            output_dir=None if folder is None else folder/f'pilot_{epoch:02d}',
+            on_chain_state=lambda _, z: states.append(z))
+        initial = torch.stack(states)
+        q = result.get_samples('Q')
+        batches.append((q, bias))
+        diagnostics, _ = diagnostics_and_mcse({name: result.get_samples(name) for name in
+            ('Q', 'signed_projection', 'gaussian_energy')}, chain_info=result.chain_info,
+            min_chains=2, min_ess=100)
+        coarse_edges = np.r_[np.linspace(bias.lower, core[0], 5)[:-1] if bias.left else [],
+                              np.linspace(core[0], core[1], 3),
+                              np.linspace(core[1], bias.upper, 7)[1:] if bias.right else []]
+        counts = np.histogram(q, coarse_edges)[0]
+        anchor_per_chain = np.sum((q >= core[0]) & (q <= core[1]), axis=1)
+        coverage = bool(np.all(counts >= 5) and np.all(anchor_per_chain >= 10))
+        stage = dict(bias=asdict(bias), config=asdict(pilot_config), diagnostics=diagnostics,
+            mean_Q=float(q.mean()), q_range=[float(q.min()), float(q.max())],
+            coarse_edges=coarse_edges.tolist(), coarse_counts=counts.tolist(),
+            core_hits_per_chain=anchor_per_chain.tolist(), coverage_ok=coverage,
+            outside_reporting_fraction=float(np.mean((q < coarse_edges[0]) | (q > coarse_edges[-1]))),
+            chain_info=result.chain_info)
+        if epoch < rounds-1:
+            bias, stage['update'] = fit_umbrella_tilt(batches, bias, width=target.width,
+                layers=target.layers, core=core, bulk_fraction=bulk_fraction)
+        report['stages'].append(stage)
+        # Until the last pilot, the next candidate has not yet been sampled.
+        # Keep partial on-disk reports unambiguous after an interrupted run.
+        complete = epoch == rounds-1
+        report.update(completed=complete, candidate_bias=asdict(bias),
+                      frozen_bias=asdict(bias) if complete else None,
+                      coverage_ok=coverage if complete else None,
+                      elapsed_seconds=time.perf_counter()-started)
+        if folder is not None:
+            temporary = folder/'calibration.json.tmp'
+            temporary.write_text(json.dumps(report, indent=2, allow_nan=False)+'\n')
+            temporary.replace(folder/'calibration.json')
+    report['warning'] = (None if report['coverage_ok'] else
+                        'Final pilot has incomplete coarse coverage or core visits; inspect before production')
+    if folder is not None:
+        (folder/'calibration.json').write_text(json.dumps(report, indent=2, allow_nan=False)+'\n')
+    return bias, report

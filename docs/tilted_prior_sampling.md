@@ -1,11 +1,84 @@
 # Tilted prior sampling and kernel-projection rate functions
 
 This API samples a full finite-width FC network path using the existing
-**ordinary Pyro HMC/NUTS** engine. Power and root tilts define two potentials,
-not two transition algorithms. HMC is the default. There are no custom
-integrators, independence proposals or layer updates.
+**ordinary Pyro HMC/NUTS** engine. The primary workflow is a calibrated,
+two-sided umbrella with normalization measured from network samples. Power
+and root tilts remain available as focused alternatives. Only the scalar
+potential changes; there are no custom integrators or layer updates.
 
-## A complete small example
+## Primary example: calibrate, freeze, sample, plot
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+  python examples/sample_broad_prior.py --device cuda --output runs/umbrella_demo
+# Omit --device cuda to use CPU.
+python examples/sample_broad_prior.py replot runs/umbrella_demo --output runs/umbrella_replot
+```
+
+Defaults are P=N=16, L=2, Erf and ReLU, a centered Gaussian quenched direction,
+unit precisions and float64. The reporting interval is Q=0.2..5. Each activation
+uses 3000 iid prior draws; three calibration batches of two chains with
+80 warmup and 150 retained draws each; and **fresh production** with four
+chains, 150 warmup and 300 retained draws each. The last calibration batch
+validates the frozen bias. All calibration observations are discarded from
+the production estimator. The tested GPU run takes a few minutes.
+
+The example separates input preparation, calibration, production, analysis,
+and plotting, and writes four figures:
+
+- `rate_function.png`: unsmoothed histogram points with ±2 pointwise MCSE;
+  a common independent-prior modal offset and a leading EWA guide.
+- `bias_and_occupancy.png`: each pilot's bias, changes in the sampled Q
+  histogram, and separate production-chain histograms. The dashed reference
+  is the naive inverse EWA density, anchored to zero at Q=1.
+- `sampling_histories.png`: Q, inverse log weights −B(Q), and signed
+  last-layer projections, including retained rejections.
+- `diagnostics.png`: minimum bulk ESS and maximum rank/folded R-hat across
+  coordinates for Q, signed projections, Gaussian energies, and inverse weights;
+  the measured log normalizer and weight Kish ESS.
+
+Settings, exact inputs/direction, calibration reports and scalar chain histories
+are saved. Diagnostics inform interpretation; they do not silently remove
+curves. Incomplete pilot coverage is recorded and does not trigger unbounded
+additional calibration. This is a small demonstration, not a precision claim
+for the paper's larger networks or every quenched direction.
+
+The library calls are equally short:
+
+```python
+import numpy as np
+from deepbays.sampling import (KernelTailTarget, UmbrellaTilt, SamplerConfig,
+    calibrate_umbrella, sample_tilted_prior, estimate_histogram_rate)
+
+P = N = 16
+L = 2
+X = np.sqrt(P) * np.eye(P)
+bar_f = np.random.default_rng(12).normal(size=P)
+bar_f -= bar_f.mean()
+target = KernelTailTarget(X, bar_f, width=N, layers=L, activation='relu')
+bias, calibration = calibrate_umbrella(target, tilt=UmbrellaTilt(lower=.2, upper=5.))
+target = KernelTailTarget(X, bar_f, width=N, layers=L, activation='relu', tilt=bias)
+result = sample_tilted_prior(target, SamplerConfig(sampler='hmc', chains=4,
+    warmup=150, draws=300, trajectory_length=1.5, target_accept=.9, seed=50021))
+rate = estimate_histogram_rate(result.get_samples('Q'), np.linspace(.2, 5, 49),
+    P=P, tilt=bias, width=N, layers=L)  # No EWA normalization supplied.
+```
+
+`calibrate_umbrella` returns an immutable bias and a report, and does not mutate
+the supplied target. Its `config` controls each pilot and `rounds` fixes the
+number of batches. To reuse a saved example bias for a fresh production run:
+
+```bash
+python examples/sample_broad_prior.py --device cuda --output runs/umbrella_repeat \
+  --bias-file runs/umbrella_demo/report.json --calibrations 0 --seed 77
+```
+
+Use the same input, direction, activation, precision and network settings;
+these are checked before reusing a bias. `--data prepared.npz` accepts X and
+bar_f verbatim, or C and bar_f with `--covariance`. There is no implicit dataset
+preprocessing. See the calibration derivation below before increasing sizes.
+
+## Alternative: focused power or root tilts
 
 ```python
 import numpy as np
@@ -46,7 +119,7 @@ The result is the same `SamplingResult` used for posterior sampling. Supply
 `output_dir='runs/my_tilt'` to stream to disk, or use `result.save(...)` after
 an in-memory run. Existing results are not overwritten.
 
-## Runnable rate-function plot
+## Existing power/root rate-function example
 
 ```bash
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
@@ -288,9 +361,10 @@ For Y=log Q, the exact relation at x>0 is
 \rho_{0,Q}(x)=Z_b e^{-b(x)}\rho_{b,Y}(\log x)/x.
 \]
 
-The estimator smooths rho_b,Y with a fixed Gaussian bandwidth and then applies
-this relation, including the 1/x Jacobian. It neither self-normalizes inverse
-weights nor drops rejections. MCSE uses autocorrelation, batch and
+With a supplied normalizer, the estimator smooths rho_b,Y with a fixed
+Gaussian bandwidth and then applies this relation, including the 1/x
+Jacobian. This fixed-normalizer mode does not self-normalize inverse weights;
+neither mode drops rejections. MCSE uses autocorrelation, batch and
 between-chain safeguards. Check local hits in every chain and bandwidth
 sensitivity; positive Gaussian-KDE tails alone do not establish overlap.
 
@@ -443,3 +517,232 @@ and proposed improvements.
 The [validation record](validation/tilted_prior_sampling.md) lists the measured
 example runtime, diagnostic outcomes, automated checks and existing unrelated
 test failures.
+
+## Two-sided umbrella and calibration derivation
+
+`UmbrellaTilt` is a scalar bias of the existing `KernelTailTarget`.
+It is the only umbrella class in deepbays; `fit_umbrella_tilt` fits coefficients
+and `calibrate_umbrella` runs the discarded pilots. Tail switches select
+`UmbrellaTilt()` for both, `UmbrellaTilt(left=False)` for right only, and
+`UmbrellaTilt(right=False)` for left only. The example exposes the same choice
+as `--tails both|left|right`. Disabled branches are identically zero, and
+their coefficients are not fitted. At least one side must be enabled.
+
+The former `BroadTilt` and `fit_broad_tilt` have moved out of deepbays to
+`Q_tails_sampling/legacy_broad_tilt.py`. That development-only wrapper keeps
+the historical right-only bias, guard=1, positional arguments and old fitter.
+Active development scripts import it locally; archived source snapshots are
+unchanged. Older saved bias dictionaries still reconstruct with the wrapper.
+New manuscript runs should use `UmbrellaTilt` and its single calibrator.
+The existing power/root API and example are unchanged. All umbrella quantities
+refer to the prior **conditional on Q>0**; the possible ReLU atom is excluded.
+
+### A bounded four-parameter family
+
+The central, leading EWA supplies the initial shape
+
+\[
+F(Q)=\frac{NL}{2}\left(Q^{1/L}-1-\frac{\log Q}{L}\right).
+\]
+
+It is a reference for allocating samples, not an assumed normalization or an
+assertion that nonlinear networks follow EWA. Define capped coordinates
+
+\[
+c_+(Q)=\begin{cases}Q&Q\le u,\\u+g_+(1-e^{-(Q-u)/g_+})&Q>u,\end{cases}
+\quad
+c_-(Q)=\begin{cases}\ell-g_-(1-e^{(Q-\ell)/g_-})&Q<\ell,\\Q&Q\ge\ell.\end{cases}
+\]
+
+In the right branch replace c+ by max(c+,1); in the left replace c− by
+min(c−,1). Defaults are lower ℓ=0.2, upper u=5, right guard g+=0.5,
+left guard g−=0.1, transition δ=0.25. With
+
+\[
+S(v)=\log(1+e^v)-\log2,\qquad G(d)=\frac{d^2}{d^2+\delta^2},
+\qquad H(d)=d-\delta(1-e^{-d/\delta}),
+\]
+
+our bias is
+
+\[
+B(Q)=S\{a F(c_-)+b_-G(1-c_-)\}
+     +S\{F(c_+)+s H(c_+-1)+b_+G(c_+-1)\}.
+\]
+
+The learned coefficients are `left_scale=a`, `left_offset=b−`, `slope=s`,
+and `offset=b+`. Initial values are (1, −1, 0, −1). Both branches have zero
+value and first derivative at Q=1. Smooth caps make B bounded over Q>0;
+these are **not hard boundaries** at the reporting endpoints. Inverse weights
+are bounded too. Proper normalization follows from boundedness, but useful
+mixing and sufficiently small Monte Carlo error do not.
+
+The optional `curvature` coefficient remains supported for old
+experiments; it is zero by default and is not learned by this algorithm.
+The four-parameter fit is intentionally restrictive. A residual occupancy dip
+may require more sampling or a different reporting interval; there is no claim
+that this family can flatten every nonlinear prior.
+
+### Dashed EWA reference in the bias figure
+
+The plotting reference is
+
+\[
+B_{\mathrm{EWA}}(Q)=-\log\rho_{\mathrm{EWA}}(Q)+\log\rho_{\mathrm{EWA}}(1).
+\]
+
+It makes exp(B_EWA) rho_EWA constant on a finite Q interval. At L=1,2 the
+example uses the exact finite-N central-EWA Gamma/product-Gamma density.
+For L>2 it uses the saddle density including its prefactor, giving
+
+\[
+B_{\mathrm{EWA}}(Q)=F(Q)+\frac{3L-1}{2L}\log Q.
+\]
+
+The latter is exact flattening of that asymptotic reference, not of the
+finite-N product law. The additive constant makes B_EWA(1)=0, matching the
+sampled bias convention. Unlike the bounded sampling bias, this reference
+has no caps or softplus and is plotted only over [lower,upper]. It is not
+used as an unrestricted sampling target. Differences from the calibrated
+curve reflect both the prior/EWA mismatch and the intentional central
+allocation and smooth-bias constraints.
+
+### Learning from discarded fixed-bias batches
+
+1. Draw independent network weights from the prior. Positive Q samples seed
+   the fit below. Sparse tail observations leave the EWA shape in place.
+2. Run two or more ordinary HMC chains with a frozen bias and fresh warmup.
+   Pool this batch with previous pilots and the iid prior sample for calibration.
+3. Estimate relative prior bin densities using a weighted central anchor,
+   then fit a small, damped change of the four coefficients.
+4. Repeat within a fixed pilot budget. **Do not refit after the last pilot**:
+   its histories and coverage describe the bias returned to the caller.
+5. Freeze that bias; start fresh production chains and fresh HMC adaptation.
+   Exclude every calibration draw from production density/normalizer estimates.
+
+The default central anchor C=[0.8,1.2] is weighted because a two-sided bias
+is generally nonzero there. For batch j drawn from p_j(Q)∝p₀(Q) exp(B_j(Q)),
+with M_j retained draws, let
+
+\[
+A_j=\sum_{m:Q_{jm}\in C}e^{-B_j(Q_{jm})}.
+\]
+
+Its expectation is M_j P₀(C)/Z_j. The expected count n_ji in a small bin i
+of width Δ_i centered at x_i is approximately
+M_j p₀(x_i) exp(B_j(x_i)) Δ_i/Z_j. Consequently,
+
+\[
+\widehat R_i\equiv\frac{\widehat p_0(x_i)}{\widehat P_0(C)}
+\simeq\frac{\sum_j n_{ji}}
+ {\Delta_i\sum_j A_j\exp(B_j(x_i))}.
+\]
+
+All arithmetic is performed in log space. A batch with fewer than ten central
+visits is skipped; only bins with at least five pooled observations are fitted.
+There are eight left, eight central, and twelve right bins; a disabled tail's
+bins are omitted. If too few bins on an enabled side are observed, the current
+bias is retained and the reason is
+reported. This midpoint/bin approximation is used **only to choose a bias**;
+the production estimator uses exact weights at each sampled Q.
+
+For requested central mass f=0.3, the desired allocation d is proportional to
+p₀ within C, with mass f; each outer interval receives mass (1−f)/2 and is
+approximately flat in Q. Fit
+
+\[
+B_{\rm new}(x_i)+\log\widehat R_i-\log d_i-c\simeq0
+\]
+
+by regularized bounded least squares, where c is an irrelevant additive
+constant. Confidence weights increase with counts and saturate at 50 hits.
+Maximum fitted coefficient changes are (0.6, 6, max(2,0.08N), 6). The update
+is damped by 0.7 and halved further if relative update weights on the latest
+usable batch have Kish ESS below one quarter of its size. This is a safeguard
+against a large extrapolation, not an MCMC mixing diagnostic.
+
+For a single enabled tail, it receives all requested non-central allocation
+and only its two coefficients are fitted. Allocation fractions refer to the
+central/selected-tail fitting interval; observations on the inactive side
+remain allowed and enter production normalization as usual.
+
+The count fit does not treat correlated pilot samples as independent precision
+evidence. Its purpose is allocation; error estimates come from fresh chains.
+`coverage_ok` means at least five observations in each active coarse bin
+(four left, two central, six right)
+and ten central visits in each final pilot chain. Signed projection, Q and
+Gaussian-energy ESS/R-hat are reported separately. The central anchor, visited
+range, skipped batches, fitted coefficients and actual bias used by every
+pilot are saved. Partial reports distinguish an untested candidate from a
+completed, validated frozen bias.
+
+### Normalization, histogram estimates, and error bars
+
+For frozen-bias samples Q_m and w_m=exp(−B(Q_m)),
+
+\[
+\widehat Z=\left(\frac1M\sum_m w_m\right)^{-1},\qquad
+\widehat\rho_i=\frac{\sum_m w_m\,\mathbf1(Q_m\in i)}
+ {\Delta_i\sum_m w_m},\qquad
+\widehat I_i=-\frac1P\log\widehat\rho_i.
+\]
+
+This estimates the **bin-average** conditional prior density. All retained
+draws, including rejections and draws outside the displayed interval, enter
+the denominator. Empty bins are left missing; no KDE, interpolation or curve
+alignment fills them. Per-bin log scaling avoids underflow in deep tails.
+
+The pointwise log-density MCSE uses the paired influence series
+
+\[
+\frac{w_m\mathbf1_i}{\overline{w\mathbf1_i}}-
+\frac{w_m}{\overline w},
+\]
+
+so numerator/normalizer covariance is included. The implementation conservatively
+combines autocorrelation-aware, batch-mean and between-chain errors. For the
+rate, divide this absolute log-density MCSE by P. In the example, a common
+independent-prior modal offset is added to both activations' respective curves;
+its uncertainty is included in the production error bars. Each activation
+has its own prior baseline; curves are never aligned in separate tail windows.
+
+Bars are ±2 MCSE, not guarantees against missed modes, finite-bin bias or
+inadequate mixing. The log/delta approximation is unreliable for very sparsely
+visited bins, whose hit counts and contribution Kish ESS are saved for inspection.
+Kish ESS describes weight concentration, not effective independent MCMC draws.
+Normalization depends on adequate return visits to the bulk. EWA influences
+only the bias shape; its approximation error is not an error in the exact
+reweighting formula.
+
+### Network forces, larger runs, and a short methods description
+
+For whitened network weights z the sampled potential is
+
+\[
+U(z)=\tfrac12\|z\|^2-B(Q(z)),\qquad
+\nabla_z U=z-B'(Q)\nabla_z Q.
+\]
+
+PyTorch differentiates the usual network and this scalar expression; standard
+Pyro HMC handles warmup, acceptance and storage. Bias calibration adds no force
+evaluations to a frozen production step. It does add discarded pilots, whose
+costs must be included when judging efficiency. Strong ReLU mean overlap and
+hidden signed modes can still produce slow mixing despite broad Q coverage.
+The small example is deliberately a centered direction and is not evidence
+for all disorder realizations or the largest requested N,L.
+
+Prepared covariance inputs, per-layer signed projections and Gaussian energies,
+and deterministic mean-activation overlap metadata remain supported. Existing
+`prefix_projection` observables are inexpensive diagnostics, not the paper's
+nonlinear layer factors q_l. Exact layer factors and more elaborate adaptive
+algorithms are outside this implementation.
+
+A methods paragraph can remain short:
+
+> We sample whitened network weights using ordinary Pyro Hamiltonian Monte
+> Carlo with a bounded scalar umbrella of the kernel projection Q. A central-EWA
+> reference initializes the umbrella; discarded fixed-bias pilots calibrate four
+> coefficients from observed occupancies relative to a weighted central anchor.
+> After freezing the bias, fresh chains estimate unsmoothed prior histogram
+> probabilities and the normalization by inverse-bias self-normalization.
+> We report chain diagnostics and covariance-aware Monte Carlo uncertainties.
